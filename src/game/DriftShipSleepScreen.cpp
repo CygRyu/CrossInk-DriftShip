@@ -180,7 +180,7 @@ void drawStat(const GfxRenderer& r, const int x, const int y, const char* label,
 
 }  // namespace
 
-void drawSleepScreen(const GfxRenderer& r, const State& s) {
+void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReserve) {
   int top = 0;
   int right = 0;
   int bottom = 0;
@@ -284,7 +284,7 @@ void drawSleepScreen(const GfxRenderer& r, const State& s) {
 
   // --- Ship numbers: a 3x3 grid pinned to the bottom ---
   const int cellHeight = r.getLineHeight(SMALL_FONT_ID) + r.getLineHeight(UI_12_FONT_ID) + 10;
-  const int gridTop = std::max(y + 8, height - bottom - 16 - cellHeight * 3);
+  const int gridTop = std::max(y + 8, height - bottom - bottomReserve - 16 - cellHeight * 3);
   const int colWidth = contentWidth / 3;
   r.drawLine(x0, gridTop - 8, x0 + contentWidth, gridTop - 8, 1, true);
 

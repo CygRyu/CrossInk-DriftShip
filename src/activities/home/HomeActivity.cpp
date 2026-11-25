@@ -29,6 +29,7 @@
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "DriftShipActivity.h"
 #include "GlobalActions.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
@@ -59,6 +60,7 @@ enum class HomeMenuAction {
   Library,
   OpdsBrowser,
   ReadingStats,
+  DriftShip,
   Bookmarks,
   FileTransfer,
   Settings,
@@ -71,7 +73,7 @@ struct HomeMenuEntry {
 };
 
 struct HomeMenuEntries {
-  static constexpr int kCapacity = 8;
+  static constexpr int kCapacity = 9;
   std::array<HomeMenuEntry, kCapacity> entries{};
   int count = 0;
 
@@ -243,6 +245,8 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasRe
   }
   if (hasReadingStats) {
     items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
+    // Drift Ship runs on reading time, so it is offered alongside the stats.
+    items.push({tr(STR_DRIFT_SHIP), Hotspot, HomeMenuAction::DriftShip});
   }
   if (hasBookmarks || hasClippings) {
     items.push({savedItemsLabel(hasBookmarks, hasClippings), BookmarkIcon, HomeMenuAction::Bookmarks});
@@ -274,6 +278,8 @@ HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasReadingStats,
   }
   if (hasReadingStats) {
     items.push({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
+    // Drift Ship runs on reading time, so it is offered alongside the stats.
+    items.push({tr(STR_DRIFT_SHIP), Hotspot, HomeMenuAction::DriftShip});
   }
 
   items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
@@ -1469,6 +1475,9 @@ void HomeActivity::loop() {
           case HomeMenuAction::ReadingStats:
             onReadingStatsOpen();
             break;
+          case HomeMenuAction::DriftShip:
+            onDriftShipOpen();
+            break;
           case HomeMenuAction::Bookmarks:
             onSavedItemsOpen();
             break;
@@ -1713,6 +1722,9 @@ void HomeActivity::loop() {
         break;
       case HomeMenuAction::ReadingStats:
         onReadingStatsOpen();
+        break;
+      case HomeMenuAction::DriftShip:
+        onDriftShipOpen();
         break;
       case HomeMenuAction::Bookmarks:
         onSavedItemsOpen();
@@ -2332,6 +2344,13 @@ void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
+
+void HomeActivity::onDriftShipOpen() {
+  startActivityForResult(std::make_unique<DriftShipActivity>(renderer, mappedInput), [this](const ActivityResult&) {
+    mappedInput.suppressNextConfirmRelease();
+    requestUpdate();
+  });
+}
 
 void HomeActivity::onReadingStatsOpen() {
   if (!SETTINGS.shouldTrackReadingStats()) return;

@@ -4,6 +4,7 @@
 
 - Drift Ship, an idle game powered by your reading time. Every EPUB or XTC reading session of 2 minutes or more advances a seed ship: maintenance, surveys, expeditions and jumps between stars, with upgrades bought automatically. Choose Drift Ship as the sleep screen to see the ship, its route and a receipt of what the latest session earned. No button presses are needed to play.
 - Set the Drift Ship doctrine (Steady, Explorer or Builder) and reset the game from System > Reading Stats.
+- Open Drift Ship from the Home menu to check in while awake: the ship view, system levels and upgrade costs, a log of the last 16 sessions, and lifetime records.
 
 ### Changed
 

@@ -209,6 +209,15 @@ uint8_t crewCapacity(const State& s) {
 
 uint16_t crewAwake(const State& s) { return std::min<uint16_t>(s.sleepersWoken, crewCapacity(s)); }
 
+uint8_t jumpWear(const State& s) {
+  const uint8_t hull = level(s, System::Hull);
+  return hull >= 10 ? 5 : static_cast<uint8_t>(25 - 2 * hull);
+}
+
+uint8_t derelictChancePercent(const State& s) {
+  return static_cast<uint8_t>(std::min<uint32_t>(60, 20u + 5u * level(s, System::Sensors)));
+}
+
 bool canJump(const State& s) {
   return s.surveysHere >= SURVEYS_TO_PLOT_COURSE && s.condition >= MIN_JUMP_CONDITION &&
          s.jumpCharge >= jumpChargeNeeded(s);
@@ -279,7 +288,7 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
     if (star == StarType::Nebula) found -= found / 4;
     data += found;
     if (s.surveysHere < UINT8_MAX) s.surveysHere++;
-    uint32_t derelictChance = std::min<uint32_t>(60, 20u + 5u * sensors);
+    uint32_t derelictChance = derelictChancePercent(s);
     if (star == StarType::Nebula) derelictChance *= 2;
     if (rollChance(s, boostedChance(derelictChance, t, SURVEY_SECONDS, EXPEDITION_SECONDS))) {
       r.derelict = true;
@@ -332,10 +341,7 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
     s.freeJump = false;
     r.jumped = true;
     r.cleanJump = longWatch;
-    if (!longWatch) {
-      const uint8_t hull = level(s, System::Hull);
-      wear(s, hull >= 10 ? 5 : static_cast<uint8_t>(25 - 2 * hull));
-    }
+    if (!longWatch) wear(s, jumpWear(s));
     if (star == StarType::Pulsar) wear(s, 15);
     s.starsVisited = satAdd32(s.starsVisited, 1);
     s.distanceDeciLy = satAdd32(s.distanceDeciLy, rollRange(s, 40, 99));
@@ -359,8 +365,73 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
 
   r.parts = parts;
   r.data = data;
+  s.bestSessionFuel = std::max(s.bestSessionFuel, r.fuel);
+  s.longestSessionSeconds = std::max(s.longestSessionSeconds, t);
+  if (r.derelict) s.derelictsFound = satAdd32(s.derelictsFound, 1);
+  if (r.lucky) s.luckyWatches = satAdd32(s.luckyWatches, 1);
+  s.upgradesBought = satAdd32(s.upgradesBought, r.upgradesBought);
   s.last = r;
   return true;
+}
+
+LogEntry makeLogEntry(const State& s) {
+  const SessionReport& r = s.last;
+  LogEntry e;
+  e.sessionNumber = r.sessionNumber;
+  e.minutes = static_cast<uint16_t>(std::min<uint32_t>(UINT16_MAX, r.seconds / 60));
+  e.watches = r.watches;
+  e.flags = (r.lucky ? LOG_LUCKY : 0) | (r.derelict ? LOG_DERELICT : 0) | (r.sleeperWoken ? LOG_SLEEPER : 0) |
+            (r.jumped ? LOG_JUMPED : 0) | (r.reachCompleted ? LOG_COLONY : 0) |
+            (r.twist == Twist::Bad ? LOG_BAD_TWIST : 0) | (r.twist == Twist::Good ? LOG_GOOD_TWIST : 0);
+  e.fuel = r.fuel;
+  e.reach = s.reach;
+  e.star = s.star;
+  e.starType = s.starType;
+  return e;
+}
+
+void pushLogEntry(SessionLog& log, const LogEntry& entry) {
+  if (log.count >= LOG_CAPACITY) {
+    for (uint8_t i = 1; i < LOG_CAPACITY; i++) log.entries[i - 1] = log.entries[i];
+    log.count = LOG_CAPACITY - 1;
+  }
+  log.entries[log.count++] = entry;
+}
+
+void serializeLogEntry(const LogEntry& e, uint8_t (&buf)[LOG_ENTRY_SIZE]) {
+  size_t i = 0;
+  const auto put = [&](const uint64_t v, const int bytes) {
+    for (int b = 0; b < bytes; b++) buf[i++] = static_cast<uint8_t>(v >> (8 * b));
+  };
+  put(e.sessionNumber, 4);
+  put(e.minutes, 2);
+  put(e.watches, 1);
+  put(e.flags, 1);
+  put(e.fuel, 8);
+  put(e.reach, 2);
+  put(e.star, 1);
+  put(e.starType, 1);
+}
+
+LogEntry deserializeLogEntry(const uint8_t (&buf)[LOG_ENTRY_SIZE]) {
+  size_t i = 0;
+  const auto get = [&](const int bytes) {
+    uint64_t v = 0;
+    for (int b = 0; b < bytes; b++) v |= static_cast<uint64_t>(buf[i++]) << (8 * b);
+    return v;
+  };
+  LogEntry e;
+  e.sessionNumber = static_cast<uint32_t>(get(4));
+  e.minutes = static_cast<uint16_t>(get(2));
+  e.watches = static_cast<uint8_t>(get(1));
+  e.flags = static_cast<uint8_t>(get(1));
+  e.fuel = get(8);
+  e.reach = static_cast<uint16_t>(get(2));
+  e.star = static_cast<uint8_t>(get(1));
+  e.starType = static_cast<uint8_t>(get(1));
+  if (e.star >= STARS_PER_REACH) e.star = 0;
+  if (e.starType >= static_cast<uint8_t>(StarType::Count)) e.starType = 0;
+  return e;
 }
 
 void formatCompactNumber(const uint64_t value, char* buf, const size_t len) {
@@ -500,6 +571,11 @@ size_t serialize(const State& s, uint8_t* buf, const size_t len) {
   w.u8(s.shortSessionCounter);
   w.u8(s.condition);
   w.u8(s.freeJump ? 1 : 0);
+  w.u64(s.bestSessionFuel);
+  w.u32(s.longestSessionSeconds);
+  w.u32(s.derelictsFound);
+  w.u32(s.luckyWatches);
+  w.u32(s.upgradesBought);
 
   const SessionReport& r = s.last;
   w.u32(r.sessionNumber);
@@ -532,7 +608,7 @@ bool deserialize(State& out, const uint8_t* buf, const size_t len) {
   uint8_t magic[4];
   rd.bytes(magic, sizeof(magic));
   const uint8_t version = rd.u8();
-  if (version != SAVE_VERSION) return false;
+  if (version == 0 || version > SAVE_VERSION) return false;
 
   State s;
   s.version = version;
@@ -556,6 +632,13 @@ bool deserialize(State& out, const uint8_t* buf, const size_t len) {
   s.shortSessionCounter = rd.u8();
   s.condition = rd.u8();
   s.freeJump = rd.u8() != 0;
+  if (version >= 2) {
+    s.bestSessionFuel = rd.u64();
+    s.longestSessionSeconds = rd.u32();
+    s.derelictsFound = rd.u32();
+    s.luckyWatches = rd.u32();
+    s.upgradesBought = rd.u32();
+  }
 
   SessionReport& r = s.last;
   r.sessionNumber = rd.u32();
@@ -589,6 +672,12 @@ bool deserialize(State& out, const uint8_t* buf, const size_t len) {
   if (s.starType >= static_cast<uint8_t>(StarType::Count)) s.starType = 0;
   if (s.condition > 100) s.condition = 100;
   if (r.lastUpgrade >= SYSTEM_COUNT) r.lastUpgrade = 0;
+  if (version < 2) {
+    // v1 had no records: seed them from what the save does know.
+    s.bestSessionFuel = r.fuel;
+    s.longestSessionSeconds = r.seconds;
+  }
+  s.version = SAVE_VERSION;
   out = s;
   return true;
 }

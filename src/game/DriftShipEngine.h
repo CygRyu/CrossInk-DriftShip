@@ -89,8 +89,51 @@ struct State {
   uint8_t shortSessionCounter = 0;  // every third short session also surveys
   uint8_t condition = 100;          // hull condition, 0..100
   bool freeJump = false;            // arrived at a dead gate
+  // Lifetime records (save version 2+).
+  uint64_t bestSessionFuel = 0;
+  uint32_t longestSessionSeconds = 0;
+  uint32_t derelictsFound = 0;
+  uint32_t luckyWatches = 0;
+  uint32_t upgradesBought = 0;
   SessionReport last;
 };
+
+// One line of the ship log: a compact summary of a past session.
+struct LogEntry {
+  uint32_t sessionNumber = 0;
+  uint16_t minutes = 0;
+  uint8_t watches = 0;  // WATCH_* bits
+  uint8_t flags = 0;    // LOG_* bits
+  uint64_t fuel = 0;
+  uint16_t reach = 0;  // where the ship was when the session ended
+  uint8_t star = 0;
+  uint8_t starType = 0;
+};
+
+constexpr uint8_t LOG_LUCKY = 1u << 0;
+constexpr uint8_t LOG_DERELICT = 1u << 1;
+constexpr uint8_t LOG_SLEEPER = 1u << 2;
+constexpr uint8_t LOG_JUMPED = 1u << 3;
+constexpr uint8_t LOG_COLONY = 1u << 4;
+constexpr uint8_t LOG_BAD_TWIST = 1u << 5;
+constexpr uint8_t LOG_GOOD_TWIST = 1u << 6;
+
+// The most recent sessions, oldest first. Fixed size: no heap.
+constexpr uint8_t LOG_CAPACITY = 16;
+struct SessionLog {
+  uint8_t count = 0;
+  LogEntry entries[LOG_CAPACITY];
+};
+
+// Builds the log line for the session that was just applied.
+LogEntry makeLogEntry(const State& state);
+
+// Appends to the log, dropping the oldest entry when full.
+void pushLogEntry(SessionLog& log, const LogEntry& entry);
+
+constexpr size_t LOG_ENTRY_SIZE = 20;
+void serializeLogEntry(const LogEntry& entry, uint8_t (&buf)[LOG_ENTRY_SIZE]);
+LogEntry deserializeLogEntry(const uint8_t (&buf)[LOG_ENTRY_SIZE]);
 
 // --- Tunables exposed for tests and the sleep screen ---
 
@@ -113,6 +156,12 @@ uint8_t crewCapacity(const State& state);
 // Woken sleepers on duty: every woken sleeper, up to the cryo bay's capacity.
 uint16_t crewAwake(const State& state);
 
+// Hull condition a normal (not clean) jump costs, after Hull upgrades.
+uint8_t jumpWear(const State& state);
+
+// Base chance in percent that a survey finds a derelict, before star effects.
+uint8_t derelictChancePercent(const State& state);
+
 // True when the course is plotted, the drive is charged and the hull holds.
 bool canJump(const State& state);
 
@@ -129,8 +178,8 @@ void formatCompactNumber(uint64_t value, char* buf, size_t len);
 
 // --- Persistence (format is little-endian, field by field) ---
 
-constexpr uint8_t SAVE_VERSION = 1;
-constexpr size_t SAVE_BUFFER_SIZE = 192;
+constexpr uint8_t SAVE_VERSION = 2;  // v2 adds lifetime records; v1 saves still load
+constexpr size_t SAVE_BUFFER_SIZE = 224;
 
 // Writes the state into buf. Returns bytes written, or 0 if buf is too small.
 size_t serialize(const State& state, uint8_t* buf, size_t len);
