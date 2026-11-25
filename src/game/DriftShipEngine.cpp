@@ -611,7 +611,6 @@ bool deserialize(State& out, const uint8_t* buf, const size_t len) {
   if (version == 0 || version > SAVE_VERSION) return false;
 
   State s;
-  s.version = version;
   s.fuel = rd.u64();
   s.parts = rd.u64();
   s.data = rd.u64();

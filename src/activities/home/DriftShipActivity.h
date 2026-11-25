@@ -30,5 +30,5 @@ class DriftShipActivity final : public Activity {
   int drawPageHeader(const char* title) const;
   void drawSystemsPage(int y, int bottom) const;
   void drawLogPage(int y, int bottom) const;
-  void drawRecordsPage(int y, int bottom) const;
+  void drawRecordsPage(int top, int bottom) const;
 };

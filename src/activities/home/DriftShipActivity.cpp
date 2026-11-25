@@ -256,12 +256,13 @@ void DriftShipActivity::drawLogPage(int y, const int bottom) const {
   }
 }
 
-void DriftShipActivity::drawRecordsPage(int y, const int bottom) const {
+void DriftShipActivity::drawRecordsPage(const int top, const int bottom) const {
   const int x = SIDE_MARGIN;
   const int width = renderer.getScreenWidth() - SIDE_MARGIN * 2;
   const int step = renderer.getLineHeight(UI_10_FONT_ID) + 8;
   char value[32];
 
+  int y = top;
   const auto row = [&](const char* label) {
     if (y + step > bottom) return;
     drawRow(renderer, x, y, width, label, value);
