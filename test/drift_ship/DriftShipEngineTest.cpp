@@ -172,3 +172,68 @@ TEST(DriftShipEngine, CompactNumbers) {
   EXPECT_EQ(fmt(3400000000000000ULL), "3.40aa");
   EXPECT_EQ(fmt(UINT64_MAX), "18.4ab");
 }
+
+namespace {
+uint32_t testFnv1a(const uint8_t* data, const size_t n) {
+  uint32_t h = 2166136261u;
+  for (size_t i = 0; i < n; i++) {
+    h ^= data[i];
+    h *= 16777619u;
+  }
+  return h;
+}
+}  // namespace
+
+TEST(DriftShipEngine, VersionOneSavesStillLoad) {
+  const State a = play(45, 30);
+  uint8_t v2[SAVE_BUFFER_SIZE];
+  const size_t len2 = serialize(a, v2, sizeof(v2));
+  ASSERT_GT(len2, 0u);
+
+  // Rebuild the v1 layout: no 24-byte records block after the freeJump byte.
+  constexpr size_t recordsAt = 83;
+  constexpr size_t recordsLen = 24;
+  uint8_t v1[SAVE_BUFFER_SIZE];
+  memcpy(v1, v2, recordsAt);
+  memcpy(v1 + recordsAt, v2 + recordsAt + recordsLen, len2 - 4 - recordsAt - recordsLen);
+  const size_t payload = len2 - 4 - recordsLen;
+  v1[4] = 1;
+  const uint32_t sum = testFnv1a(v1, payload);
+  for (int b = 0; b < 4; b++) v1[payload + b] = static_cast<uint8_t>(sum >> (8 * b));
+
+  State b;
+  ASSERT_TRUE(deserialize(b, v1, payload + 4));
+  EXPECT_EQ(b.version, SAVE_VERSION);
+  EXPECT_EQ(b.sessions, a.sessions);
+  EXPECT_EQ(b.fuel, a.fuel);
+  EXPECT_EQ(b.bestSessionFuel, a.last.fuel);
+  EXPECT_EQ(b.last.fuel, a.last.fuel);
+}
+
+TEST(DriftShipEngine, RecordsTrackTheBest) {
+  State s;
+  applySession(s, 20 * MIN, Doctrine::Steady);
+  applySession(s, 80 * MIN, Doctrine::Steady);
+  applySession(s, 10 * MIN, Doctrine::Steady);
+  EXPECT_EQ(s.longestSessionSeconds, 80u * MIN);
+  EXPECT_GE(s.bestSessionFuel, baseFuelForSeconds(80 * MIN));
+}
+
+TEST(DriftShipEngine, LogKeepsTheNewestEntries) {
+  State s;
+  SessionLog log;
+  for (int i = 0; i < LOG_CAPACITY + 5; i++) {
+    applySession(s, 15 * MIN, Doctrine::Steady);
+    pushLogEntry(log, makeLogEntry(s));
+  }
+  ASSERT_EQ(log.count, LOG_CAPACITY);
+  EXPECT_EQ(log.entries[LOG_CAPACITY - 1].sessionNumber, s.sessions);
+  EXPECT_EQ(log.entries[0].sessionNumber, s.sessions - LOG_CAPACITY + 1);
+
+  uint8_t buf[LOG_ENTRY_SIZE];
+  serializeLogEntry(log.entries[3], buf);
+  const LogEntry back = deserializeLogEntry(buf);
+  EXPECT_EQ(back.sessionNumber, log.entries[3].sessionNumber);
+  EXPECT_EQ(back.fuel, log.entries[3].fuel);
+  EXPECT_EQ(back.minutes, 15u);
+}

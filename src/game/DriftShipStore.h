@@ -15,11 +15,15 @@ bool load(State& state);
 // Writes the game through a temp file, keeping the previous save as a backup.
 bool save(const State& state);
 
+// Loads the ship log (the most recent sessions). Missing or damaged entries
+// are skipped; returns false only when the log file can't be read at all.
+bool loadLog(SessionLog& log);
+
 // Called by the readers when a reading session is committed. activeSeconds is
 // idle-filtered reading time that did not come from automatic page turns.
 void onReadingSession(uint32_t activeSeconds);
 
-// Hard reset: deletes the save and its backup. The next session starts a new voyage.
+// Hard reset: deletes the save, its backup and the ship log. The next session starts a new voyage.
 bool hardReset();
 
 }  // namespace DriftShip
