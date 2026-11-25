@@ -42,6 +42,8 @@
 #include "components/themes/dashboard/DashboardTheme.h"
 #include "components/themes/minimal/MinimalTheme.h"
 #include "fontIds.h"
+#include "game/DriftShipSleepScreen.h"
+#include "game/DriftShipStore.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
 
@@ -582,6 +584,9 @@ void SleepActivity::onEnter() {
       return renderMinimalStatsSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::DASHBOARD_SLEEP):
       return renderDashboardSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::DRIFT_SHIP_SLEEP):
+      if (!SETTINGS.shouldTrackReadingStats()) return renderDefaultSleepScreen();
+      return renderDriftShipSleepScreen();
     default:
       return renderDefaultSleepScreen();
   }
@@ -949,6 +954,16 @@ void SleepActivity::renderDashboardSleepScreen() const {
   DashboardTheme theme;
   theme.drawSleepScreen(renderer, book, &bookStats, &globalStats, progressPercent, chapterTitle.c_str(),
                         sleepCoverFilterInvertsGeneratedScreen());
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
+}
+
+void SleepActivity::renderDriftShipSleepScreen() const {
+  // The reader commits its session (and the game's turn) before this runs on
+  // devices without PSRAM; rendersBeforeExit() also returns false for this
+  // mode, so the screen always shows the session that just ended.
+  DriftShip::State state;
+  DriftShip::load(state);
+  DriftShip::drawSleepScreen(renderer, state);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
 }
 

@@ -32,6 +32,7 @@
 #include "components/UITheme.h"
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "fontIds.h"
+#include "game/DriftShipStore.h"
 #include "util/BookCacheUtils.h"
 
 namespace {
@@ -771,6 +772,7 @@ void XtcReaderActivity::commitReadingStats() {
     recordCurrentPageReadingTime("session_commit");
     commitReadingSession(stats, globalStats, sessionReadingSeconds,
                          hasSessionStartLocalDateTime ? &sessionStartLocalDateTime : nullptr);
+    DriftShip::onReadingSession(sessionReadingSeconds);
   }
   sessionReadingSeconds = 0;
   if ((statsTrackingActive || paceDirty || pendingStatsCommit) && stats.save(xtc->getCachePath())) {

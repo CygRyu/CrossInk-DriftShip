@@ -45,6 +45,7 @@ enum class SettingAction {
   Network,
   BackupStats,
   ResetGlobalStats,
+  ResetDriftShip,
   ClearCache,
   CheckForUpdates,
   SdFirmwareUpdate,

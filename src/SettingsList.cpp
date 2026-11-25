@@ -266,6 +266,9 @@ const std::vector<SettingInfo>& getBaseSettingsList() {
                            "readingIdleTimeThresholdUnits", StrId::STR_CAT_SYSTEM));
     add(SettingInfo::Toggle(StrId::STR_TRACK_READING_STATS, &CrossPointSettings::trackReadingStats, "trackReadingStats",
                             StrId::STR_CAT_SYSTEM));
+    add(SettingInfo::Enum(StrId::STR_DRIFT_SHIP_DOCTRINE, &CrossPointSettings::driftShipDoctrine,
+                          {StrId::STR_DRIFT_SHIP_STEADY, StrId::STR_DRIFT_SHIP_EXPLORER, StrId::STR_DRIFT_SHIP_BUILDER},
+                          "driftShipDoctrine", StrId::STR_CAT_SYSTEM));
 
     // Frontlight quick-panel state: persisted + web-exposed, category-less so
     // it stays off the Settings screen (edited from the swipe-down panel).

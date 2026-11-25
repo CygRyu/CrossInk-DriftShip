@@ -167,6 +167,9 @@ class EpubReaderActivity final : public Activity {
   uint32_t sessionPaceSampleSeconds = 0;
   uint16_t sessionPaceSampleCount = 0;
   uint32_t sessionReadingSeconds = 0;
+  // Part of sessionReadingSeconds spent with automatic page turns on. Drift Ship
+  // only rewards reading the user paged through themselves.
+  uint32_t sessionAutoTurnSeconds = 0;
   uint16_t lastAutoPageTurnIntervalSeconds = 0;
   bool bookHasCustomReaderSettings = false;
   bool bookHasAutoPageTurnInterval = false;
