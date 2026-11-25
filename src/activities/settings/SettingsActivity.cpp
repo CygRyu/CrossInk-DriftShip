@@ -51,6 +51,7 @@
 #include "components/UiAppHelpers.h"
 #include "components/icons/frontlightHeaderIcons.h"
 #include "fontIds.h"
+#include "game/DriftShipStore.h"
 #include "util/DictionaryRegistry.h"
 #include "util/FrontlightSchedule.h"
 
@@ -1178,6 +1179,16 @@ void SettingsActivity::toggleCurrentSetting() {
               }
               requestUpdate();
             });
+        break;
+      case SettingAction::ResetDriftShip:
+        startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_DRIFT_SHIP_RESET),
+                                                                      tr(STR_DRIFT_SHIP_RESET_CONFIRM)),
+                               [this](const ActivityResult& result) {
+                                 if (!result.isCancelled && !DriftShip::hardReset()) {
+                                   LOG_ERR("SET", "Failed to reset Drift Ship");
+                                 }
+                                 requestUpdate();
+                               });
         break;
       case SettingAction::ClearCache:
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);

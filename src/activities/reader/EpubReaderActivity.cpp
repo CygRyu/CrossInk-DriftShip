@@ -71,6 +71,7 @@
 #include "clippings/ClippingTextMatcher.h"
 #include "clippings/ClippingsManager.h"
 #include "components/UITheme.h"
+#include "game/DriftShipStore.h"
 #if CROSSINK_APP_CAP_TOUCH
 #include "components/TouchHeaderBackButton.h"
 #endif
@@ -1528,7 +1529,9 @@ void EpubReaderActivity::commitReadingStatsSession() {
   recordCurrentPageReadingTime("session_commit");
   commitReadingSession(stats, globalStats, sessionReadingSeconds,
                        hasSessionStartLocalDateTime ? &sessionStartLocalDateTime : nullptr);
+  DriftShip::onReadingSession(sessionReadingSeconds - std::min(sessionAutoTurnSeconds, sessionReadingSeconds));
   sessionReadingSeconds = 0;
+  sessionAutoTurnSeconds = 0;
 }
 
 void EpubReaderActivity::finalizeReadingStatsOnExit() {
@@ -1556,6 +1559,7 @@ void EpubReaderActivity::syncStatsTrackingState() {
   }
   statsTrackingActive = enabled;
   sessionReadingSeconds = 0;
+  sessionAutoTurnSeconds = 0;
   hasSessionStartLocalDateTime = getCurrentLocalReadingStatsDateTime(sessionStartLocalDateTime);
   pageShownAtMs = section && !activeFootnotePreview ? millis() : 0UL;
   armReadingPaceWarmup("stats_toggle");
@@ -1670,6 +1674,10 @@ void EpubReaderActivity::recordCurrentPageReadingTime(const char* source) {
   uint32_t seconds = 0;
   if (currentPageReadingSecondsForStats(seconds, source)) {
     sessionReadingSeconds = sessionReadingSeconds > UINT32_MAX - seconds ? UINT32_MAX : sessionReadingSeconds + seconds;
+    if (automaticPageTurnActive) {
+      sessionAutoTurnSeconds =
+          sessionAutoTurnSeconds > UINT32_MAX - seconds ? UINT32_MAX : sessionAutoTurnSeconds + seconds;
+    }
   }
   pageShownAtMs = 0UL;
 }
@@ -2449,6 +2457,7 @@ void EpubReaderActivity::onEnter() {
 #endif
   armReadingPaceWarmup("reader_open");
   sessionReadingSeconds = 0;
+  sessionAutoTurnSeconds = 0;
   hasSessionStartLocalDateTime = getCurrentLocalReadingStatsDateTime(sessionStartLocalDateTime);
 
   globalStats = GlobalReadingStats::load();
@@ -4989,6 +4998,7 @@ void EpubReaderActivity::resetReadingPaceData() {
 void EpubReaderActivity::resetCurrentBookStatsAfterDelete() {
   stats = BookReadingStats{};
   sessionReadingSeconds = 0;
+  sessionAutoTurnSeconds = 0;
   sessionPaceSampleSeconds = 0;
   sessionPaceSampleCount = 0;
   pendingReadFolderMove = false;

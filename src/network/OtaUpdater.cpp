@@ -28,7 +28,9 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback, void*, s
 
 namespace {
 #ifndef CROSSINK_OTA_RELEASE_URL
-#define CROSSINK_OTA_RELEASE_URL "https://api.github.com/repos/uxjulia/CrossInk/releases/latest"
+// Drift Ship builds update from this repository, not upstream CrossInk, so an
+// OTA update never replaces the game with a build that lacks it.
+#define CROSSINK_OTA_RELEASE_URL "https://api.github.com/repos/CygRyu/CrossInk-DriftShip/releases/latest"
 #endif
 
 constexpr char latestReleaseUrl[] = CROSSINK_OTA_RELEASE_URL;
