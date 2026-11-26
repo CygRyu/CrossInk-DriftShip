@@ -546,6 +546,14 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
   } else {
     fuel -= scaleRatio(fuel, static_cast<uint32_t>(-r.modulePermille), 1000);
   }
+  // Every session's Fuel varies by up to 15% either way, so the same reading
+  // time never pays exactly the same twice.
+  r.variancePermille = static_cast<int16_t>(10 * (static_cast<int32_t>(rollRange(s, 85, 115)) - 100));
+  if (r.variancePermille >= 0) {
+    fuel = addPermille(fuel, static_cast<uint32_t>(r.variancePermille));
+  } else {
+    fuel -= scaleRatio(fuel, static_cast<uint32_t>(-r.variancePermille), 1000);
+  }
   if (r.lucky) fuel = satMul(fuel, 2);
   r.fuel = fuel;
   s.lifetimeFuel = satAdd(s.lifetimeFuel, fuel);
@@ -561,7 +569,7 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
 
   // --- Maintenance: always runs; repairs come first ---
   r.watches |= WATCH_MAINTENANCE;
-  const uint32_t repair = 10u + 2u * drones + dutyStat(s, Role::Engineer) / 2;
+  const uint32_t repair = rollRange(s, 8, 12) + 2u * drones + dutyStat(s, Role::Engineer) / 2;
   s.condition = static_cast<uint8_t>(std::min<uint32_t>(100, s.condition + repair));
   parts += rollRange(s, 1, 3) + drones;
   if (rollChance(s, boostedChance(15, t, MIN_SESSION_SECONDS, SURVEY_SECONDS))) parts += 5 + hoarders;
@@ -617,7 +625,7 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
     expeditionData = applyPercent(expeditionData, bonusPct);
     parts += expeditionParts;
     data += expeditionData;
-    wear(s, 5);
+    wear(s, static_cast<uint8_t>(rollRange(s, 3, 7)));
     if (rollChance(s, boostedChance(30u + medic, t, EXPEDITION_SECONDS, LONG_WATCH_SECONDS))) sleeper = true;
   }
 
@@ -654,7 +662,11 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
     s.freeJump = false;
     r.jumped = true;
     r.cleanJump = longWatch;
-    if (!longWatch) wear(s, jumpWear(s));
+    if (!longWatch) {
+      // jumpWear() is the average; a real jump lands within 3 points of it.
+      const int32_t wearRoll = static_cast<int32_t>(jumpWear(s)) + static_cast<int32_t>(rollRange(s, 0, 6)) - 3;
+      wear(s, static_cast<uint8_t>(std::max<int32_t>(1, wearRoll)));
+    }
     if (star == StarType::Pulsar) wear(s, 15);
     s.starsVisited = satAdd32(s.starsVisited, 1);
     s.distanceDeciLy = satAdd32(s.distanceDeciLy, rollRange(s, 40, 99));
@@ -996,6 +1008,9 @@ size_t serialize(const State& s, uint8_t* buf, const size_t len) {
   writeModule(w, r.module);
   w.u8(r.retired);
 
+  // Version 4: Fuel variance.
+  w.u16(static_cast<uint16_t>(r.variancePermille));
+
   if (!w.ok) return 0;
   w.u32(fnv1a(buf, w.pos));
   return w.ok ? w.pos : 0;
@@ -1088,6 +1103,7 @@ bool deserialize(State& out, const uint8_t* buf, const size_t len) {
     r.module = readModule(rd);
     r.retired = rd.u8();
   }
+  if (version >= 4) r.variancePermille = static_cast<int16_t>(rd.u16());
 
   const size_t payloadLen = rd.pos;
   const uint32_t checksum = rd.u32();
