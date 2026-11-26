@@ -24,7 +24,27 @@ enum class System : uint8_t { Reactor = 0, Drones, Sensors, CryoBay, Hull, JumpD
 
 enum class Doctrine : uint8_t { Steady = 0, Explorer, Builder, Count };
 
-enum class StarType : uint8_t { RedDwarf = 0, IceField, Nebula, GasGiant, DeadGate, Pulsar, Count };
+// Star types. The first six are found everywhere; the rest belong to later
+// galaxy eras. New types are only ever appended, since saves and the ship log
+// store the index.
+enum class StarType : uint8_t {
+  RedDwarf = 0,
+  IceField,
+  Nebula,
+  GasGiant,
+  DeadGate,
+  Pulsar,
+  Ruins,       // old ruins: derelicts three times as common, modules more likely
+  BinaryStar,  // +25% Parts and Data
+  BlackHole,   // the next jump needs 40% less charge, but wears the hull more
+  Void,        // empty space: half the survey Data, +25% Fuel
+  Count
+};
+
+// Every REACHES_PER_ERA reaches the galaxy changes: each era has its own mix of
+// star types. After the last era the cycle starts again, further out.
+enum class Era : uint8_t { OuterRim = 0, RuinBelt, DenseCore, DeepVoid, ShatteredArm, FarGalaxy, Count };
+constexpr uint16_t REACHES_PER_ERA = 5;
 
 enum class Twist : uint8_t { None = 0, Good, Bad };
 
@@ -105,6 +125,9 @@ struct SessionReport {
   uint16_t colonyEventSeed = 0;  // name seed of the colony in colonyEvent
   uint16_t foundedSeed = 0;      // name seed of the colony founded or joined, when reachCompleted
   bool foundedJoined = false;    // the network was full: settlers joined an existing colony
+  // Save version 7+: galaxy eras.
+  uint8_t bonusStar = 0;  // StarType that gave starPermille
+  bool newEra = false;    // this session's jump crossed into a new era
 };
 
 struct State {
@@ -239,6 +262,13 @@ uint32_t colonyGoods(const Colony& colony);
 // Growth per session in tenths of a percent for a session of minutes.
 uint32_t colonyGrowthPerMille(const Colony& colony, uint32_t minutes);
 
+// The era for a reach, and its 1-based number (era 7 is the Outer rim again).
+Era eraForReach(uint16_t reach);
+uint16_t eraNumber(uint16_t reach);
+
+// Chance in percent of each star type in an era. Sums to 100.
+uint8_t starTypeChance(Era era, StarType type);
+
 // Population across every colony.
 uint64_t totalPopulation(const State& state);
 
@@ -322,8 +352,8 @@ void formatCompactNumber(uint64_t value, char* buf, size_t len);
 
 // --- Persistence (format is little-endian, field by field) ---
 
-// v2 records, v3 crew and modules, v4 Fuel variance, v5 merging, v6 colonies; older saves load.
-constexpr uint8_t SAVE_VERSION = 6;
+// v2 records, v3 crew and modules, v4 Fuel variance, v5 merging, v6 colonies, v7 eras; older saves load.
+constexpr uint8_t SAVE_VERSION = 7;
 // Big enough for a full crew roster and colony network. Callers keep it off the stack.
 constexpr size_t SAVE_BUFFER_SIZE = 1024;
 

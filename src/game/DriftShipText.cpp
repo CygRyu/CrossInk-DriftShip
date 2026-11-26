@@ -214,4 +214,52 @@ void describeColonyEvent(const ColonyEvent event, const uint16_t nameSeed, char*
   snprintf(buf, len, fmt, name);
 }
 
+const char* starTypeName(const uint8_t type) {
+  switch (static_cast<StarType>(type)) {
+    case StarType::RedDwarf:
+      return tr(STR_DRIFT_SHIP_STAR_RED_DWARF);
+    case StarType::IceField:
+      return tr(STR_DRIFT_SHIP_STAR_ICE_FIELD);
+    case StarType::Nebula:
+      return tr(STR_DRIFT_SHIP_STAR_NEBULA);
+    case StarType::GasGiant:
+      return tr(STR_DRIFT_SHIP_STAR_GAS_GIANT);
+    case StarType::DeadGate:
+      return tr(STR_DRIFT_SHIP_STAR_DEAD_GATE);
+    case StarType::Pulsar:
+      return tr(STR_DRIFT_SHIP_STAR_PULSAR);
+    case StarType::Ruins:
+      return tr(STR_DRIFT_SHIP_STAR_RUINS);
+    case StarType::BinaryStar:
+      return tr(STR_DRIFT_SHIP_STAR_BINARY);
+    case StarType::BlackHole:
+      return tr(STR_DRIFT_SHIP_STAR_BLACK_HOLE);
+    case StarType::Void:
+      return tr(STR_DRIFT_SHIP_STAR_VOID);
+    case StarType::Count:
+      break;
+  }
+  return tr(STR_DRIFT_SHIP_STAR_RED_DWARF);
+}
+
+const char* eraName(const Era era) {
+  switch (era) {
+    case Era::OuterRim:
+      return tr(STR_DRIFT_SHIP_ERA_OUTER_RIM);
+    case Era::RuinBelt:
+      return tr(STR_DRIFT_SHIP_ERA_RUIN_BELT);
+    case Era::DenseCore:
+      return tr(STR_DRIFT_SHIP_ERA_DENSE_CORE);
+    case Era::DeepVoid:
+      return tr(STR_DRIFT_SHIP_ERA_DEEP_VOID);
+    case Era::ShatteredArm:
+      return tr(STR_DRIFT_SHIP_ERA_SHATTERED_ARM);
+    case Era::FarGalaxy:
+      return tr(STR_DRIFT_SHIP_ERA_FAR_GALAXY);
+    case Era::Count:
+      break;
+  }
+  return tr(STR_DRIFT_SHIP_ERA_OUTER_RIM);
+}
+
 }  // namespace DriftShip
