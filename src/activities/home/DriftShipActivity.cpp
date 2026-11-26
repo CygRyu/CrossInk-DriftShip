@@ -80,6 +80,7 @@ void DriftShipActivity::onEnter() {
   Activity::onEnter();
   DriftShip::load(state);
   DriftShip::loadLog(log);
+  DriftShip::loadStory(state, story, sizeof(story));
   page = Page::Ship;
   requestUpdate();
 }
@@ -159,7 +160,7 @@ void DriftShipActivity::render(RenderLock&&) {
 
   if (page == Page::Ship) {
     // The same view as the sleep screen, with room left for the button hints.
-    DriftShip::drawSleepScreen(renderer, state, metrics.buttonHintsHeight);
+    DriftShip::drawSleepScreen(renderer, state, metrics.buttonHintsHeight, story);
   } else {
     renderer.clearScreen();
     switch (page) {

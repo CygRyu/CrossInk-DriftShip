@@ -4,6 +4,7 @@
 #include <string>
 
 #include "DriftShipEngine.h"
+#include "DriftShipStory.h"
 
 using namespace DriftShip;
 
@@ -782,4 +783,94 @@ TEST(DriftShipEras, VersionSixSavesStillLoad) {
   EXPECT_EQ(b.version, SAVE_VERSION);
   EXPECT_EQ(b.last.bonusStar, static_cast<uint8_t>(StarType::GasGiant));
   EXPECT_FALSE(b.last.newEra);
+}
+
+// --- Captain's log and event packs ---
+
+TEST(DriftShipStory, SectionHeadersParse) {
+  PackSection s;
+  ASSERT_TRUE(parsePackSection("[place]", s));
+  EXPECT_EQ(s.pool, Pool::Place);
+  EXPECT_EQ(s.era, -1);
+  ASSERT_TRUE(parsePackSection("[ place  ruin-belt ]", s));
+  EXPECT_EQ(s.era, static_cast<int8_t>(Era::RuinBelt));
+  ASSERT_TRUE(parsePackSection("[reaction night-owl]", s));
+  EXPECT_EQ(s.pool, Pool::Reaction);
+  EXPECT_EQ(s.trait, static_cast<int8_t>(Trait::NightOwl));
+  ASSERT_TRUE(parsePackSection("[bad]", s));
+  EXPECT_EQ(s.pool, Pool::Bad);
+  // Unknown pools, eras and traits are skipped, not misread.
+  EXPECT_FALSE(parsePackSection("[weather]", s));
+  EXPECT_FALSE(parsePackSection("[place andromeda]", s));
+  EXPECT_FALSE(parsePackSection("[reaction grumpy]", s));
+  EXPECT_FALSE(parsePackSection("[finding rare]", s));
+  EXPECT_FALSE(parsePackSection("[place", s));
+  EXPECT_FALSE(parsePackSection("place]", s));
+}
+
+TEST(DriftShipStory, PackLinesAreTrimmed) {
+  char a[] = "   a frozen garden \r\n";
+  ASSERT_TRUE(cleanPackLine(a));
+  EXPECT_STREQ(a, "a frozen garden");
+  char b[] = "  # a comment";
+  EXPECT_FALSE(cleanPackLine(b));
+  char c[] = " \t ";
+  EXPECT_FALSE(cleanPackLine(c));
+}
+
+TEST(DriftShipStory, SectionsMatchTheirEraAndTrait) {
+  PackSection any;
+  any.pool = Pool::Place;
+  PackSection ruins = any;
+  ruins.era = static_cast<int8_t>(Era::RuinBelt);
+  const auto rim = static_cast<int8_t>(Era::OuterRim);
+  const auto belt = static_cast<int8_t>(Era::RuinBelt);
+  EXPECT_TRUE(sectionMatches(any, Pool::Place, rim, -1));
+  EXPECT_TRUE(sectionMatches(ruins, Pool::Place, belt, -1));
+  EXPECT_FALSE(sectionMatches(ruins, Pool::Place, rim, -1));
+  EXPECT_FALSE(sectionMatches(any, Pool::Finding, rim, -1));
+}
+
+TEST(DriftShipStory, RecentPiecesDontRepeat) {
+  StoryMemory memory;
+  uint32_t seed = 12345;
+  uint16_t last[STORY_RECENT];
+  for (int round = 0; round < 200; round++) {
+    const uint16_t pick = pickPiece(memory, Pool::Finding, 20, seed);
+    ASSERT_LT(pick, 20u);
+    // Almost always unlike the last few picks (8 rerolls make a repeat very rare).
+    if (round >= 3) {
+      EXPECT_NE(pick, last[(round - 1) % STORY_RECENT]);
+    }
+    last[round % STORY_RECENT] = pick;
+  }
+  // A pool of one still works.
+  EXPECT_EQ(pickPiece(memory, Pool::Good, 1, seed), 0u);
+  EXPECT_EQ(pickPiece(memory, Pool::Good, 0, seed), 0u);
+}
+
+TEST(DriftShipStory, TemplatesExpandWithoutPrintf) {
+  StorySlots slots;
+  slots.day = 1047;
+  slots.place = "an ice moon";
+  slots.finding = "100% of a %s %n";  // pack text is never a format string
+  char out[STORY_LEN];
+  expandTemplate("Day {day}. Sensors swept {place} and found {finding}. {unknown} {", slots, out, sizeof(out));
+  EXPECT_STREQ(out, "Day 1047. Sensors swept an ice moon and found 100% of a %s %n. {unknown} {");
+  slots.day = 0;
+  expandTemplate("Day {day}.", slots, out, sizeof(out));
+  EXPECT_STREQ(out, "Day 0.");
+  char tiny[8];
+  expandTemplate("Day {day}. A quiet watch near {place}.", slots, tiny, sizeof(tiny));
+  EXPECT_STREQ(tiny, "Day 0. ");
+}
+
+TEST(DriftShipStory, StoriesDontTouchTheGame) {
+  State a = play(30, 20);
+  const uint32_t rng = a.rng;
+  const uint32_t seed1 = storySeed(a);
+  EXPECT_EQ(storySeed(a), seed1);  // the same line however often it's drawn
+  EXPECT_EQ(a.rng, rng);
+  applySession(a, 30 * MIN, Doctrine::Steady);
+  EXPECT_NE(storySeed(a), seed1);
 }
