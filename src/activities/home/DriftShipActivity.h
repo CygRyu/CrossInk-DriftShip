@@ -6,7 +6,7 @@
 #include "game/DriftShipEngine.h"
 
 // Read-only Drift Ship screens: the ship view, systems, the ship log and
-// lifetime records. The game itself plays without this screen; it is only for
+// lifetime records, plus the crew and salvaged modules. The game itself plays without this screen; it is only for
 // checking in. Page buttons flip pages, Back exits.
 class DriftShipActivity final : public Activity {
  public:
@@ -18,17 +18,19 @@ class DriftShipActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
-  enum class Page : uint8_t { Ship = 0, Systems, Log, Records, Count };
+  enum class Page : uint8_t { Ship = 0, Crew, Systems, Modules, Log, Records, Count };
 
   // Loaded once on entry. The activity object lives on the heap (owned by
-  // ActivityManager), so these ~600 bytes never touch the task stack.
+  // ActivityManager), so these ~1 KB never touch the task stack.
   DriftShip::State state;
   DriftShip::SessionLog log;
   Page page = Page::Ship;
 
   void turnPage(int delta);
   int drawPageHeader(const char* title) const;
+  void drawCrewPage(int y, int bottom) const;
   void drawSystemsPage(int y, int bottom) const;
+  void drawModulesPage(int y, int bottom) const;
   void drawLogPage(int y, int bottom) const;
   void drawRecordsPage(int top, int bottom) const;
 };

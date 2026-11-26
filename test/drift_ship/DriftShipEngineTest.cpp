@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 
 #include "DriftShipEngine.h"
@@ -184,30 +185,52 @@ uint32_t testFnv1a(const uint8_t* data, const size_t n) {
 }
 }  // namespace
 
+// Rebuilds an older save layout from a current one: drops the version 3 crew
+// block, and for version 1 the records block too, then re-signs the result.
+size_t makeLegacySave(const State& state, const uint8_t version, uint8_t* out) {
+  uint8_t cur[SAVE_BUFFER_SIZE];
+  const size_t len = serialize(state, cur, sizeof(cur));
+  const size_t v3Block = 18 + 1 + 16u * state.crewCount + 1 + 4u * state.moduleCount + 29;
+  size_t payload = len - 4 - v3Block;
+  memcpy(out, cur, payload);
+  if (version == 1) {
+    constexpr size_t recordsAt = 83;
+    constexpr size_t recordsLen = 24;
+    memmove(out + recordsAt, out + recordsAt + recordsLen, payload - recordsAt - recordsLen);
+    payload -= recordsLen;
+  }
+  out[4] = version;
+  const uint32_t sum = testFnv1a(out, payload);
+  for (int b = 0; b < 4; b++) out[payload + b] = static_cast<uint8_t>(sum >> (8 * b));
+  return payload + 4;
+}
+
 TEST(DriftShipEngine, VersionOneSavesStillLoad) {
   const State a = play(45, 30);
-  uint8_t v2[SAVE_BUFFER_SIZE];
-  const size_t len2 = serialize(a, v2, sizeof(v2));
-  ASSERT_GT(len2, 0u);
-
-  // Rebuild the v1 layout: no 24-byte records block after the freeJump byte.
-  constexpr size_t recordsAt = 83;
-  constexpr size_t recordsLen = 24;
   uint8_t v1[SAVE_BUFFER_SIZE];
-  memcpy(v1, v2, recordsAt);
-  memcpy(v1 + recordsAt, v2 + recordsAt + recordsLen, len2 - 4 - recordsAt - recordsLen);
-  const size_t payload = len2 - 4 - recordsLen;
-  v1[4] = 1;
-  const uint32_t sum = testFnv1a(v1, payload);
-  for (int b = 0; b < 4; b++) v1[payload + b] = static_cast<uint8_t>(sum >> (8 * b));
+  const size_t len = makeLegacySave(a, 1, v1);
 
   State b;
-  ASSERT_TRUE(deserialize(b, v1, payload + 4));
+  ASSERT_TRUE(deserialize(b, v1, len));
   EXPECT_EQ(b.version, SAVE_VERSION);
   EXPECT_EQ(b.sessions, a.sessions);
   EXPECT_EQ(b.fuel, a.fuel);
   EXPECT_EQ(b.bestSessionFuel, a.last.fuel);
   EXPECT_EQ(b.last.fuel, a.last.fuel);
+}
+
+TEST(DriftShipEngine, VersionTwoSavesGetACrew) {
+  const State a = play(45, 60);
+  ASSERT_GT(a.sleepersWoken, 0u);
+  uint8_t v2[SAVE_BUFFER_SIZE];
+  const size_t len = makeLegacySave(a, 2, v2);
+
+  State b;
+  ASSERT_TRUE(deserialize(b, v2, len));
+  EXPECT_EQ(b.version, SAVE_VERSION);
+  EXPECT_EQ(b.crewCount, std::min<uint16_t>(a.sleepersWoken, crewCapacity(b)));
+  EXPECT_EQ(b.longestSessionSeconds, a.longestSessionSeconds);
+  EXPECT_EQ(b.moduleCount, 0u);
 }
 
 TEST(DriftShipEngine, RecordsTrackTheBest) {
@@ -236,4 +259,69 @@ TEST(DriftShipEngine, LogKeepsTheNewestEntries) {
   EXPECT_EQ(back.sessionNumber, log.entries[3].sessionNumber);
   EXPECT_EQ(back.fuel, log.entries[3].fuel);
   EXPECT_EQ(back.minutes, 15u);
+}
+
+TEST(DriftShipEngine, CrewStaysWithinCapacity) {
+  for (const uint32_t m : {20u, 45u, 90u}) {
+    const State s = play(m, 300);
+    EXPECT_LE(s.crewCount, crewCapacity(s));
+    EXPECT_LE(s.moduleCount, MODULE_SLOTS);
+    for (uint8_t i = 0; i < s.crewCount; i++) {
+      const CrewMember& c = s.crew[i];
+      EXPECT_GE(c.skill, 1u);
+      EXPECT_LE(c.skill, MAX_STAT);
+      EXPECT_LE(c.level, MAX_CREW_LEVEL);
+      EXPECT_NE(c.traits[0], Trait::None);
+    }
+  }
+}
+
+TEST(DriftShipEngine, LegendaryIsGuaranteedBy150Wakes) {
+  State s;
+  s.wakesSinceLegendary = 0;
+  EXPECT_EQ(legendaryChancePercent(s), 1u);
+  s.wakesSinceLegendary = 149;
+  EXPECT_EQ(legendaryChancePercent(s), 100u);
+}
+
+TEST(DriftShipEngine, CrewAndModulesRoundTrip) {
+  const State a = play(60, 250);
+  ASSERT_GT(a.crewCount, 0u);
+  uint8_t buf[SAVE_BUFFER_SIZE];
+  const size_t len = serialize(a, buf, sizeof(buf));
+  ASSERT_GT(len, 0u);
+  State b;
+  ASSERT_TRUE(deserialize(b, buf, len));
+  ASSERT_EQ(b.crewCount, a.crewCount);
+  ASSERT_EQ(b.moduleCount, a.moduleCount);
+  for (uint8_t i = 0; i < a.crewCount; i++) {
+    EXPECT_EQ(b.crew[i].nameSeed, a.crew[i].nameSeed);
+    EXPECT_EQ(b.crew[i].role, a.crew[i].role);
+    EXPECT_EQ(b.crew[i].traits[1], a.crew[i].traits[1]);
+    EXPECT_EQ(b.crew[i].xpMinutes, a.crew[i].xpMinutes);
+  }
+  for (uint8_t i = 0; i < a.moduleCount; i++) {
+    EXPECT_EQ(moduleScore(b.modules[i]), moduleScore(a.modules[i]));
+  }
+}
+
+TEST(DriftShipEngine, FullRosterFitsTheSaveBuffer) {
+  State s = play(30, 5);
+  s.crewCount = MAX_CREW;
+  s.moduleCount = MODULE_SLOTS;
+  uint8_t buf[SAVE_BUFFER_SIZE];
+  EXPECT_GT(serialize(s, buf, sizeof(buf)), 0u);
+}
+
+TEST(DriftShipEngine, DISABLED_PrintCrew) {
+  const State s = play(45, 400);
+  char name[32];
+  for (uint8_t i = 0; i < s.crewCount; i++) {
+    const CrewMember& c = s.crew[i];
+    crewName(c.nameSeed, name, sizeof(name));
+    printf("%-18s role=%d rar=%d S%u G%u L%u lv%u t=%d,%d inj=%u\n", name, (int)c.role, (int)c.rarity, c.skill, c.grit,
+           c.luck, c.level, (int)c.traits[0], (int)c.traits[1], c.injured);
+  }
+  printf("modules=%u legacy=%u retired=%u legendary=%u found=%u\n", s.moduleCount, s.legacyPermille, s.crewRetired,
+         s.legendaryWoken, s.modulesFound);
 }

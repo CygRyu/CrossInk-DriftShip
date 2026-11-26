@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "DriftShipCrew.h"
+
 // Drift Ship: a zero-button idle game powered by reading time.
 //
 // This header is the pure game engine. It has no Arduino, HAL or renderer
@@ -42,6 +44,16 @@ constexpr uint32_t LONG_WATCH_SECONDS = 60 * 60;
 constexpr uint32_t BONUS_RAMP_SECONDS = 60 * 60;
 constexpr uint32_t SESSION_CAP_SECONDS = 90 * 60;
 
+// What happened to a newly woken sleeper.
+enum class CrewEvent : uint8_t {
+  None = 0,
+  Joined,    // took an empty bunk
+  Replaced,  // was stronger than the weakest crew member, who went back to cryo
+  Cryo,      // the crew was full and stronger, so the sleeper stays in cryo
+};
+
+enum class ModuleEvent : uint8_t { None = 0, Installed, Discarded };
+
 // What happened in the latest counted session. Persisted with the state so the
 // sleep screen can draw the receipt after a reboot.
 struct SessionReport {
@@ -65,6 +77,16 @@ struct SessionReport {
   bool reachCompleted = false;
   uint8_t upgradesBought = 0;
   uint8_t lastUpgrade = 0;  // System index of the last upgrade bought
+  // Phase 2 (save version 3+).
+  int16_t modulePermille = 0;  // +/- x/1000 Fuel from salvaged modules
+  CrewEvent crewEvent = CrewEvent::None;
+  CrewMember newCrew;  // valid when crewEvent != None
+  bool crewInjured = false;
+  uint16_t injuredNameSeed = 0;  // who was hurt, when crewInjured
+  uint8_t levelUps = 0;
+  ModuleEvent moduleEvent = ModuleEvent::None;
+  Module module;  // valid when moduleEvent != None
+  uint8_t retired = 0;
 };
 
 struct State {
@@ -95,6 +117,18 @@ struct State {
   uint32_t derelictsFound = 0;
   uint32_t luckyWatches = 0;
   uint32_t upgradesBought = 0;
+  // Crew and modules (save version 3+).
+  uint8_t crewCount = 0;
+  CrewMember crew[MAX_CREW];
+  uint8_t moduleCount = 0;
+  Module modules[MODULE_SLOTS];
+  uint16_t legacyPermille = 0;       // permanent Fuel bonus from retired crew
+  uint16_t wakesSinceLegendary = 0;  // bad-luck protection
+  uint8_t surveysSinceDerelict = 0;  // bad-luck protection
+  uint8_t derelictsSinceModule = 0;  // bad-luck protection
+  uint32_t legendaryWoken = 0;
+  uint32_t modulesFound = 0;
+  uint32_t crewRetired = 0;
   SessionReport last;
 };
 
@@ -117,6 +151,7 @@ constexpr uint8_t LOG_JUMPED = 1u << 3;
 constexpr uint8_t LOG_COLONY = 1u << 4;
 constexpr uint8_t LOG_BAD_TWIST = 1u << 5;
 constexpr uint8_t LOG_GOOD_TWIST = 1u << 6;
+constexpr uint8_t LOG_NEW_CREW = 1u << 7;
 
 // The most recent sessions, oldest first. Fixed size: no heap.
 constexpr uint8_t LOG_CAPACITY = 16;
@@ -153,8 +188,17 @@ uint64_t jumpChargeNeeded(const State& state);
 
 uint8_t crewCapacity(const State& state);
 
-// Woken sleepers on duty: every woken sleeper, up to the cryo bay's capacity.
+// Crew on the roster (including injured crew).
 uint16_t crewAwake(const State& state);
+
+// Sum of a module effect across installed modules, in benefit points.
+int32_t moduleBonus(const State& state, ModuleEffect effect);
+
+// How the Steward rates a module: higher is better.
+int32_t moduleScore(const Module& module);
+
+// Chance in percent that the next woken sleeper is Legendary.
+uint8_t legendaryChancePercent(const State& state);
 
 // Hull condition a normal (not clean) jump costs, after Hull upgrades.
 uint8_t jumpWear(const State& state);
@@ -178,8 +222,9 @@ void formatCompactNumber(uint64_t value, char* buf, size_t len);
 
 // --- Persistence (format is little-endian, field by field) ---
 
-constexpr uint8_t SAVE_VERSION = 2;  // v2 adds lifetime records; v1 saves still load
-constexpr size_t SAVE_BUFFER_SIZE = 224;
+constexpr uint8_t SAVE_VERSION = 3;  // v2 adds records, v3 crew and modules; older saves still load
+// Big enough for a full crew roster. Callers keep it off the stack.
+constexpr size_t SAVE_BUFFER_SIZE = 512;
 
 // Writes the state into buf. Returns bytes written, or 0 if buf is too small.
 size_t serialize(const State& state, uint8_t* buf, size_t len);

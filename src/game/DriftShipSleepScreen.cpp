@@ -4,10 +4,12 @@
 #include <I18n.h>
 
 #include <algorithm>
+#include <climits>
 #include <cstdio>
 #include <cstring>
 
 #include "DriftShipEngine.h"
+#include "DriftShipText.h"
 #include "fontIds.h"
 
 namespace DriftShip {
@@ -47,10 +49,10 @@ void append(char* buf, const size_t len, const char* sep, const char* text) {
 }
 
 // "x1.40 reactor" style multiplier, or nothing when the bonus is zero.
-void appendMultiplier(char* buf, const size_t len, const uint16_t permille, const char* label) {
+void appendMultiplier(char* buf, const size_t len, const int32_t permille, const char* label) {
   if (permille == 0) return;
   char part[32];
-  const unsigned total = 1000u + permille;
+  const unsigned total = static_cast<unsigned>(1000 + permille < 0 ? 0 : 1000 + permille);
   snprintf(part, sizeof(part), "x%u.%02u %s", total / 1000, (total % 1000) / 10, label);
   append(buf, len, "  ", part);
 }
@@ -145,8 +147,10 @@ void drawRoute(const GfxRenderer& r, const State& s, const int x, const int y, c
   r.drawLine(hx, y + 8, hx - 8, y, 2, true);
 }
 
-// Draws text word-wrapped to maxWidth. Returns the y below the last line.
-int drawWrapped(const GfxRenderer& r, const int fontId, const int x, int y, const int maxWidth, const char* text) {
+// Draws text word-wrapped to maxWidth, stopping before a line would cross
+// maxY. Returns the y below the last line drawn.
+int drawWrapped(const GfxRenderer& r, const int fontId, const int x, int y, const int maxWidth, const char* text,
+                const int maxY = INT_MAX) {
   const int lineHeight = r.getLineHeight(fontId);
   char line[LINE_LEN] = "";
   const char* p = text;
@@ -156,6 +160,7 @@ int drawWrapped(const GfxRenderer& r, const int fontId, const int x, int y, cons
     char candidate[LINE_LEN];
     snprintf(candidate, sizeof(candidate), "%s%s%.*s", line, line[0] ? " " : "", static_cast<int>(wordLen), p);
     if (line[0] && r.getTextWidth(fontId, candidate) > maxWidth) {
+      if (y + lineHeight > maxY) return y;
       r.drawText(fontId, x, y, line);
       y += lineHeight;
       snprintf(line, sizeof(line), "%.*s", static_cast<int>(wordLen), p);
@@ -165,7 +170,7 @@ int drawWrapped(const GfxRenderer& r, const int fontId, const int x, int y, cons
     p += wordLen;
     while (*p == ' ') p++;
   }
-  if (line[0]) {
+  if (line[0] && y + lineHeight <= maxY) {
     r.drawText(fontId, x, y, line);
     y += lineHeight;
   }
@@ -242,6 +247,7 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
   appendMultiplier(line, sizeof(line), rep.reactorPermille, tr(STR_DRIFT_SHIP_REACTOR));
   appendMultiplier(line, sizeof(line), rep.crewPermille, tr(STR_DRIFT_SHIP_CREW_BONUS));
   appendMultiplier(line, sizeof(line), rep.starPermille, tr(STR_DRIFT_SHIP_GAS_GIANT_BONUS));
+  appendMultiplier(line, sizeof(line), rep.modulePermille, tr(STR_DRIFT_SHIP_MODULES_BONUS));
   if (rep.lucky) {
     char lucky[32];
     snprintf(lucky, sizeof(lucky), "x2 %s", tr(STR_DRIFT_SHIP_LUCKY));
@@ -261,11 +267,41 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
   y += r.getLineHeight(UI_10_FONT_ID) + 4;
 
   // --- What happened ---
-  char events[LINE_LEN * 2] = "";
+  // Up to ~6 short sentences; 256 bytes is the one larger buffer on this
+  // screen and is released as soon as drawing returns.
+  char events[256] = "";
   if (rep.derelict) append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_DERELICT));
   if (rep.twist == Twist::Good) append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_GOOD));
   if (rep.twist == Twist::Bad) append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_BAD));
-  if (rep.sleeperWoken) append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_SLEEPER));
+  if (rep.crewEvent != CrewEvent::None) {
+    char name[32];
+    char sentence[128];
+    crewName(rep.newCrew.nameSeed, name, sizeof(name));
+    const char* fmt = rep.crewEvent == CrewEvent::Joined     ? tr(STR_DRIFT_SHIP_EVENT_CREW_JOINED)
+                      : rep.crewEvent == CrewEvent::Replaced ? tr(STR_DRIFT_SHIP_EVENT_CREW_REPLACED)
+                                                             : tr(STR_DRIFT_SHIP_EVENT_CREW_CRYO);
+    snprintf(sentence, sizeof(sentence), fmt, name, roleName(rep.newCrew.role), rarityName(rep.newCrew.rarity));
+    append(events, sizeof(events), " ", sentence);
+  } else if (rep.sleeperWoken) {
+    append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_SLEEPER));
+  }
+  if (rep.crewInjured) {
+    char name[32];
+    char sentence[64];
+    crewName(rep.injuredNameSeed, name, sizeof(name));
+    snprintf(sentence, sizeof(sentence), tr(STR_DRIFT_SHIP_EVENT_INJURED), name);
+    append(events, sizeof(events), " ", sentence);
+  }
+  if (rep.moduleEvent == ModuleEvent::Installed) {
+    append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_MODULE_INSTALLED));
+  } else if (rep.moduleEvent == ModuleEvent::Discarded) {
+    append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_MODULE_SCRAPPED));
+  }
+  if (rep.levelUps > 0) {
+    char sentence[48];
+    snprintf(sentence, sizeof(sentence), tr(STR_DRIFT_SHIP_EVENT_LEVEL_UPS), static_cast<unsigned>(rep.levelUps));
+    append(events, sizeof(events), " ", sentence);
+  }
   if (rep.repaired) append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_REPAIRED));
   if (rep.upgradesBought > 0) {
     char upgrades[48];
@@ -277,14 +313,19 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
            rep.cleanJump ? tr(STR_DRIFT_SHIP_EVENT_CLEAN_JUMP) : tr(STR_DRIFT_SHIP_EVENT_JUMPED));
   }
   if (rep.reachCompleted) append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_COLONY));
-  if (events[0]) {
-    // drawWrapped works line by line, so long event text is split safely.
-    y = drawWrapped(r, SMALL_FONT_ID, x0, y, contentWidth, events);
+  if (rep.retired > 0) {
+    char sentence[48];
+    snprintf(sentence, sizeof(sentence), tr(STR_DRIFT_SHIP_EVENT_RETIRED), static_cast<unsigned>(rep.retired));
+    append(events, sizeof(events), " ", sentence);
   }
-
   // --- Ship numbers: a 3x3 grid pinned to the bottom ---
   const int cellHeight = r.getLineHeight(SMALL_FONT_ID) + r.getLineHeight(UI_12_FONT_ID) + 10;
-  const int gridTop = std::max(y + 8, height - bottom - bottomReserve - 16 - cellHeight * 3);
+  const int pinnedTop = height - bottom - bottomReserve - 16 - cellHeight * 3;
+  if (events[0]) {
+    // Events fill the space above the grid; anything that doesn't fit is cut.
+    y = drawWrapped(r, SMALL_FONT_ID, x0, y, contentWidth, events, pinnedTop - 16);
+  }
+  const int gridTop = std::max(y + 8, pinnedTop);
   const int colWidth = contentWidth / 3;
   r.drawLine(x0, gridTop - 8, x0 + contentWidth, gridTop - 8, 1, true);
 

@@ -6,6 +6,11 @@
 - Set the Drift Ship doctrine (Steady, Explorer or Builder) and reset the game from System > Reading Stats.
 - Open Drift Ship from the Home menu to check in while awake: the ship view, system levels and upgrade costs, a log of the last 16 sessions, and lifetime records.
 
+- Drift Ship crew: every woken sleeper is rolled with a name, role (Engineer, Scientist, Pilot, Scout, Medic or Quartermaster), rarity from Common to Legendary, Skill, Grit and Luck stats, traits and a quirk. The best crew member for each role boosts their part of the ship, crew level up from reading time, can be injured by bad twists, and retire to colonies for a permanent Fuel bonus.
+- Drift Ship salvaged modules: derelicts can hold modules with random effects and drawbacks. The ship keeps the best four.
+- Bad-luck protection for Legendary crew, derelicts and modules, so unlucky streaks stay short.
+- New Crew and Modules pages in the Drift Ship screen, and crew news on the sleep screen.
+
 ### Changed
 
 - Check for Updates now installs Drift Ship releases from CygRyu/CrossInk-DriftShip instead of upstream CrossInk.

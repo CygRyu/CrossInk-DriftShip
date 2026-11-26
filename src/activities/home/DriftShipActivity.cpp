@@ -12,10 +12,11 @@
 #include "fontIds.h"
 #include "game/DriftShipSleepScreen.h"
 #include "game/DriftShipStore.h"
+#include "game/DriftShipText.h"
 
 namespace {
 
-constexpr int PAGE_COUNT = 4;
+constexpr int PAGE_COUNT = 6;
 constexpr int SIDE_MARGIN = 20;
 
 const char* systemName(const DriftShip::System system) {
@@ -133,8 +134,14 @@ void DriftShipActivity::render(RenderLock&&) {
   } else {
     renderer.clearScreen();
     switch (page) {
+      case Page::Crew:
+        drawCrewPage(drawPageHeader(tr(STR_DRIFT_SHIP_PAGE_CREW)), contentBottom);
+        break;
       case Page::Systems:
         drawSystemsPage(drawPageHeader(tr(STR_DRIFT_SHIP_PAGE_SYSTEMS)), contentBottom);
+        break;
+      case Page::Modules:
+        drawModulesPage(drawPageHeader(tr(STR_DRIFT_SHIP_PAGE_MODULES)), contentBottom);
         break;
       case Page::Log:
         drawLogPage(drawPageHeader(tr(STR_DRIFT_SHIP_PAGE_LOG)), contentBottom);
@@ -248,7 +255,11 @@ void DriftShipActivity::drawLogPage(int y, const int bottom) const {
     if (e.flags & DriftShip::LOG_JUMPED) addTag(tr(STR_DRIFT_SHIP_TAG_JUMP));
     if (e.flags & DriftShip::LOG_COLONY) addTag(tr(STR_DRIFT_SHIP_TAG_COLONY));
     if (e.flags & DriftShip::LOG_DERELICT) addTag(tr(STR_DRIFT_SHIP_TAG_DERELICT));
-    if (e.flags & DriftShip::LOG_SLEEPER) addTag(tr(STR_DRIFT_SHIP_TAG_SLEEPER));
+    if (e.flags & DriftShip::LOG_NEW_CREW) {
+      addTag(tr(STR_DRIFT_SHIP_TAG_NEW_CREW));
+    } else if (e.flags & DriftShip::LOG_SLEEPER) {
+      addTag(tr(STR_DRIFT_SHIP_TAG_SLEEPER));
+    }
     if (e.flags & DriftShip::LOG_LUCKY) addTag(tr(STR_DRIFT_SHIP_TAG_LUCKY));
     if (e.flags & DriftShip::LOG_BAD_TWIST) addTag(tr(STR_DRIFT_SHIP_TAG_DAMAGE));
     renderer.drawText(SMALL_FONT_ID, x, y, renderer.truncatedText(SMALL_FONT_ID, tags, width).c_str());
@@ -297,4 +308,77 @@ void DriftShipActivity::drawRecordsPage(const int top, const int bottom) const {
   row(tr(STR_DRIFT_SHIP_REC_LUCKY));
   DriftShip::formatCompactNumber(state.upgradesBought, value, sizeof(value));
   row(tr(STR_DRIFT_SHIP_REC_UPGRADES));
+  DriftShip::formatCompactNumber(state.legendaryWoken, value, sizeof(value));
+  row(tr(STR_DRIFT_SHIP_REC_LEGENDARY));
+  DriftShip::formatCompactNumber(state.modulesFound, value, sizeof(value));
+  row(tr(STR_DRIFT_SHIP_REC_MODULES));
+  DriftShip::formatCompactNumber(state.crewRetired, value, sizeof(value));
+  row(tr(STR_DRIFT_SHIP_REC_RETIRED));
+  snprintf(value, sizeof(value), "+%u.%u%%", static_cast<unsigned>(state.legacyPermille / 10),
+           static_cast<unsigned>(state.legacyPermille % 10));
+  row(tr(STR_DRIFT_SHIP_REC_LEGACY));
+}
+
+void DriftShipActivity::drawCrewPage(int y, const int bottom) const {
+  const int x = SIDE_MARGIN;
+  const int width = renderer.getScreenWidth() - SIDE_MARGIN * 2;
+  if (state.crewCount == 0) {
+    renderer.drawText(UI_10_FONT_ID, x, y,
+                      renderer.truncatedText(UI_10_FONT_ID, tr(STR_DRIFT_SHIP_CREW_EMPTY), width).c_str());
+    return;
+  }
+
+  const int titleLine = renderer.getLineHeight(UI_10_FONT_ID);
+  const int smallLine = renderer.getLineHeight(SMALL_FONT_ID);
+  char name[32];
+  char right[48];
+  char line[96];
+  for (uint8_t i = 0; i < state.crewCount; i++) {
+    if (y + titleLine + smallLine * 2 > bottom) break;
+    const DriftShip::CrewMember& c = state.crew[i];
+
+    DriftShip::crewName(c.nameSeed, name, sizeof(name));
+    snprintf(right, sizeof(right), "%s, %s", DriftShip::roleName(c.role), DriftShip::rarityName(c.rarity));
+    drawRow(renderer, x, y, width, name, right);
+    y += titleLine;
+
+    snprintf(line, sizeof(line), tr(STR_DRIFT_SHIP_CREW_STATS), static_cast<unsigned>(c.level),
+             static_cast<unsigned>(c.skill), static_cast<unsigned>(c.grit), static_cast<unsigned>(c.luck));
+    renderer.drawText(SMALL_FONT_ID, x, y, line);
+    y += smallLine;
+
+    if (c.injured > 0) {
+      snprintf(line, sizeof(line), tr(STR_DRIFT_SHIP_INJURED), static_cast<unsigned>(c.injured));
+    } else {
+      char traits[64];
+      DriftShip::describeTraits(c, traits, sizeof(traits));
+      snprintf(line, sizeof(line), "%s. %s", traits, DriftShip::quirkText(c.quirk));
+    }
+    renderer.drawText(SMALL_FONT_ID, x, y, renderer.truncatedText(SMALL_FONT_ID, line, width).c_str());
+    y += smallLine + 8;
+  }
+}
+
+void DriftShipActivity::drawModulesPage(int y, const int bottom) const {
+  const int x = SIDE_MARGIN;
+  const int width = renderer.getScreenWidth() - SIDE_MARGIN * 2;
+  if (state.moduleCount == 0) {
+    renderer.drawText(UI_10_FONT_ID, x, y,
+                      renderer.truncatedText(UI_10_FONT_ID, tr(STR_DRIFT_SHIP_MODULES_EMPTY), width).c_str());
+    return;
+  }
+
+  const int titleLine = renderer.getLineHeight(UI_10_FONT_ID);
+  const int smallLine = renderer.getLineHeight(SMALL_FONT_ID);
+  char title[32];
+  char effects[96];
+  for (uint8_t i = 0; i < state.moduleCount; i++) {
+    if (y + titleLine + smallLine > bottom) break;
+    snprintf(title, sizeof(title), tr(STR_DRIFT_SHIP_MODULE_N), static_cast<unsigned>(i + 1));
+    renderer.drawText(UI_10_FONT_ID, x, y, title, true, EpdFontFamily::BOLD);
+    y += titleLine;
+    DriftShip::describeModule(state.modules[i], effects, sizeof(effects));
+    renderer.drawText(SMALL_FONT_ID, x, y, renderer.truncatedText(SMALL_FONT_ID, effects, width).c_str());
+    y += smallLine + 10;
+  }
 }
