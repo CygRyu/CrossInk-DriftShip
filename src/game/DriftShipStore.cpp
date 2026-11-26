@@ -525,7 +525,8 @@ bool readStoryFile(StoryMemory& memory, uint32_t& sessionNumber, char* line, con
   f.close();
   if (!ok) return false;
   // The memory is only a hint; clamp it so a damaged file can't index out of range.
-  for (auto& next : m.next) next %= STORY_RECENT;
+  std::transform(std::begin(m.next), std::end(m.next), std::begin(m.next),
+                 [](const uint8_t next) { return static_cast<uint8_t>(next % STORY_RECENT); });
   memory = m;
   return true;
 }
