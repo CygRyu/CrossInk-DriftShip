@@ -21,26 +21,6 @@ constexpr int SIDE_MARGIN = 24;
 // longest translated line with room to spare and keeps stack use small.
 constexpr size_t LINE_LEN = 96;
 
-const char* starTypeName(const uint8_t type) {
-  switch (static_cast<StarType>(type)) {
-    case StarType::RedDwarf:
-      return tr(STR_DRIFT_SHIP_STAR_RED_DWARF);
-    case StarType::IceField:
-      return tr(STR_DRIFT_SHIP_STAR_ICE_FIELD);
-    case StarType::Nebula:
-      return tr(STR_DRIFT_SHIP_STAR_NEBULA);
-    case StarType::GasGiant:
-      return tr(STR_DRIFT_SHIP_STAR_GAS_GIANT);
-    case StarType::DeadGate:
-      return tr(STR_DRIFT_SHIP_STAR_DEAD_GATE);
-    case StarType::Pulsar:
-      return tr(STR_DRIFT_SHIP_STAR_PULSAR);
-    case StarType::Count:
-      break;
-  }
-  return tr(STR_DRIFT_SHIP_STAR_RED_DWARF);
-}
-
 // Appends text to buf, separated by sep when buf already has content.
 void append(char* buf, const size_t len, const char* sep, const char* text) {
   const size_t used = strlen(buf);
@@ -58,9 +38,12 @@ void appendMultiplier(char* buf, const size_t len, const int32_t permille, const
 }
 
 // Deterministic starfield: changes only when the ship reaches a new star.
+// Each galaxy era has its own sky: the dense core is crowded, the void nearly empty.
 void drawStarfield(const GfxRenderer& r, const State& s, const int x, const int y, const int w, const int h) {
+  static const uint8_t ERA_STARS[static_cast<uint8_t>(Era::Count)] = {90, 80, 170, 30, 130, 110};
+  const int stars = ERA_STARS[static_cast<uint8_t>(eraForReach(s.reach))];
   uint32_t seed = 0x2545F491u ^ (s.starsVisited * 2654435761u) ^ s.reach;
-  for (int i = 0; i < 90; i++) {
+  for (int i = 0; i < stars; i++) {
     seed ^= seed << 13;
     seed ^= seed >> 17;
     seed ^= seed << 5;
@@ -211,7 +194,8 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
            static_cast<unsigned>(s.star + 1), static_cast<unsigned>(STARS_PER_REACH));
   r.drawCenteredText(UI_10_FONT_ID, y, line);
   y += r.getLineHeight(UI_10_FONT_ID);
-  r.drawCenteredText(SMALL_FONT_ID, y, starTypeName(s.starType));
+  snprintf(line, sizeof(line), tr(STR_DRIFT_SHIP_STAR_IN_ERA), starTypeName(s.starType), eraName(eraForReach(s.reach)));
+  r.drawCenteredText(SMALL_FONT_ID, y, line);
   y += r.getLineHeight(SMALL_FONT_ID) + 8;
 
   // --- Ship art and route ---
@@ -250,7 +234,9 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
   appendMultiplier(line, sizeof(line), rep.reactorPermille, tr(STR_DRIFT_SHIP_REACTOR));
   appendMultiplier(line, sizeof(line), rep.crewPermille, tr(STR_DRIFT_SHIP_CREW_BONUS));
   appendMultiplier(line, sizeof(line), rep.colonyPermille, tr(STR_DRIFT_SHIP_COLONY_BONUS));
-  appendMultiplier(line, sizeof(line), rep.starPermille, tr(STR_DRIFT_SHIP_GAS_GIANT_BONUS));
+  appendMultiplier(line, sizeof(line), rep.starPermille,
+                   rep.bonusStar == static_cast<uint8_t>(StarType::Void) ? tr(STR_DRIFT_SHIP_VOID_BONUS)
+                                                                         : tr(STR_DRIFT_SHIP_GAS_GIANT_BONUS));
   appendMultiplier(line, sizeof(line), rep.modulePermille, tr(STR_DRIFT_SHIP_MODULES_BONUS));
   appendMultiplier(line, sizeof(line), rep.variancePermille, tr(STR_DRIFT_SHIP_VARIANCE));
   if (rep.lucky) {
@@ -329,6 +315,11 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
     snprintf(sentence, sizeof(sentence),
              rep.foundedJoined ? tr(STR_DRIFT_SHIP_EVENT_COLONY_JOINED) : tr(STR_DRIFT_SHIP_EVENT_COLONY_FOUNDED),
              name);
+    append(events, sizeof(events), " ", sentence);
+  }
+  if (rep.newEra) {
+    char sentence[80];
+    snprintf(sentence, sizeof(sentence), tr(STR_DRIFT_SHIP_EVENT_NEW_ERA), eraName(eraForReach(s.reach)));
     append(events, sizeof(events), " ", sentence);
   }
   if (rep.retired > 0) {

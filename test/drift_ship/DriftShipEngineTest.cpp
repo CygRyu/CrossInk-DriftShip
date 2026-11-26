@@ -185,7 +185,8 @@ uint32_t testFnv1a(const uint8_t* data, const size_t n) {
 }
 }  // namespace
 
-// Rebuilds an older save layout from a current one: drops the version 6 block,
+// Rebuilds an older save layout from a current one: drops the version 7 block,
+// then the version 6 block,
 // then the version 5 block,
 // then the version 4 block, then the version 3 crew block, then for version 1 the records block, and
 // re-signs the result.
@@ -196,7 +197,9 @@ size_t makeLegacySave(const State& state, const uint8_t version, uint8_t* out) {
   constexpr size_t v5Block = 15;
   constexpr size_t v4Block = 2;
   const size_t v3Block = 18 + 1 + 16u * state.crewCount + 1 + 4u * state.moduleCount + 29;
-  size_t payload = len - 4 - v6Block;
+  constexpr size_t v7Block = 2;
+  size_t payload = len - 4 - v7Block;
+  if (version <= 5) payload -= v6Block;
   if (version <= 4) payload -= v5Block;
   if (version <= 3) payload -= v4Block;
   if (version <= 2) payload -= v3Block;
@@ -691,4 +694,92 @@ TEST(DriftShipColonies, VersionFiveSavesGetLivingColonies) {
   EXPECT_EQ(b.colony[1].foundedReach, 2u);
   EXPECT_EQ(b.colony[0].population, 2000u);
   EXPECT_EQ(b.sleepersAtReachStart, b.sleepersWoken);
+}
+
+// --- Galaxy eras ---
+
+TEST(DriftShipEras, EraChangesEveryFiveReaches) {
+  EXPECT_EQ(eraForReach(0), Era::OuterRim);
+  EXPECT_EQ(eraForReach(4), Era::OuterRim);
+  EXPECT_EQ(eraForReach(5), Era::RuinBelt);
+  EXPECT_EQ(eraForReach(29), Era::FarGalaxy);
+  EXPECT_EQ(eraForReach(30), Era::OuterRim);  // the cycle starts again
+  EXPECT_EQ(eraNumber(0), 1u);
+  EXPECT_EQ(eraNumber(30), 7u);
+}
+
+TEST(DriftShipEras, EveryEraHasAFullStarTable) {
+  for (uint8_t e = 0; e < static_cast<uint8_t>(Era::Count); e++) {
+    uint32_t total = 0;
+    for (uint8_t t = 0; t < static_cast<uint8_t>(StarType::Count); t++) {
+      total += starTypeChance(static_cast<Era>(e), static_cast<StarType>(t));
+    }
+    EXPECT_EQ(total, 100u) << int(e);
+  }
+  // The Outer rim only has the original six star types.
+  for (uint8_t t = static_cast<uint8_t>(StarType::Ruins); t < static_cast<uint8_t>(StarType::Count); t++) {
+    EXPECT_EQ(starTypeChance(Era::OuterRim, static_cast<StarType>(t)), 0u);
+  }
+}
+
+TEST(DriftShipEras, LaterErasBringNewStars) {
+  State s;
+  applySession(s, 20 * MIN, Doctrine::Steady);
+  s.reach = 5;  // the Ruin belt
+  uint32_t ruins = 0;
+  for (int i = 0; i < 300; i++) {
+    s.surveysHere = SURVEYS_TO_PLOT_COURSE;
+    s.condition = 100;
+    s.star = 0;
+    s.jumpCharge = jumpChargeNeeded(s) + 1;
+    applySession(s, 20 * MIN, Doctrine::Steady);
+    if (s.starType == static_cast<uint8_t>(StarType::Ruins)) ruins++;
+    s.reach = 5;
+  }
+  EXPECT_GT(ruins, 50u);
+}
+
+TEST(DriftShipEras, CrossingIntoANewEraIsReported) {
+  State s;
+  applySession(s, 20 * MIN, Doctrine::Steady);
+  s.reach = REACHES_PER_ERA - 1;
+  s.star = STARS_PER_REACH - 1;
+  s.surveysHere = SURVEYS_TO_PLOT_COURSE;
+  s.condition = 100;
+  s.jumpCharge = jumpChargeNeeded(s) * 4;
+  applySession(s, 20 * MIN, Doctrine::Steady);
+  ASSERT_TRUE(s.last.reachCompleted);
+  EXPECT_TRUE(s.last.newEra);
+  EXPECT_EQ(eraForReach(s.reach), Era::RuinBelt);
+}
+
+TEST(DriftShipEras, BlackHolesSlingTheShipOut) {
+  State s;
+  applySession(s, 20 * MIN, Doctrine::Steady);
+  s.freeJump = false;
+  s.starType = static_cast<uint8_t>(StarType::RedDwarf);
+  const uint64_t normal = jumpChargeNeeded(s);
+  s.starType = static_cast<uint8_t>(StarType::BlackHole);
+  EXPECT_LT(jumpChargeNeeded(s), normal);
+}
+
+TEST(DriftShipEras, TheVoidPaysFuelForQuietReading) {
+  State s;
+  applySession(s, 20 * MIN, Doctrine::Steady);
+  s.starType = static_cast<uint8_t>(StarType::Void);
+  applySession(s, 20 * MIN, Doctrine::Steady);
+  EXPECT_EQ(s.last.starPermille, 250u);
+  EXPECT_EQ(s.last.bonusStar, static_cast<uint8_t>(StarType::Void));
+}
+
+TEST(DriftShipEras, VersionSixSavesStillLoad) {
+  State a = play(45, 30);
+  a.last.starPermille = 300;
+  uint8_t v6[SAVE_BUFFER_SIZE];
+  const size_t len = makeLegacySave(a, 6, v6);
+  State b;
+  ASSERT_TRUE(deserialize(b, v6, len));
+  EXPECT_EQ(b.version, SAVE_VERSION);
+  EXPECT_EQ(b.last.bonusStar, static_cast<uint8_t>(StarType::GasGiant));
+  EXPECT_FALSE(b.last.newEra);
 }

@@ -4,6 +4,7 @@
 
 #include "DriftShipColony.h"
 #include "DriftShipCrew.h"
+#include "DriftShipEngine.h"
 
 // Translated names for Drift Ship crew and modules, shared by the sleep screen
 // and the Drift Ship activity.
@@ -18,6 +19,8 @@ const char* quirkText(uint8_t quirk);
 void describeModule(const Module& module, char* buf, size_t len);
 
 const char* specialtyName(Specialty specialty);
+const char* starTypeName(uint8_t starType);  // a StarType index
+const char* eraName(Era era);
 
 // What a colony sends back, e.g. "+7% Fuel, +7 Parts per session".
 void describeColonyTithe(const Colony& colony, char* buf, size_t len);

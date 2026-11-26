@@ -75,15 +75,32 @@ uint32_t boostedChance(const uint32_t chance, const uint32_t seconds, const uint
 
 bool rollChance(State& s, const uint32_t percent) { return rollPercent(s) < percent; }
 
+// Star type weights in percent for each era, in StarType order. static const
+// keeps the table in flash.
+static const uint8_t ERA_STAR_WEIGHTS[static_cast<uint8_t>(Era::Count)][static_cast<uint8_t>(StarType::Count)] = {
+    // Red, Ice, Neb, Gas, Gate, Pulsar, Ruins, Binary, Hole, Void
+    {25, 20, 20, 20, 5, 10, 0, 0, 0, 0},      // Outer rim
+    {15, 10, 20, 10, 5, 10, 30, 0, 0, 0},     // Ruin belt
+    {15, 10, 5, 15, 5, 15, 0, 25, 10, 0},     // Dense core
+    {15, 15, 0, 10, 10, 0, 10, 0, 0, 40},     // Deep void
+    {10, 25, 25, 10, 5, 15, 0, 5, 5, 0},      // Shattered arm
+    {10, 10, 10, 10, 5, 10, 15, 10, 10, 10},  // Far galaxy
+};
+
 StarType rollStarType(State& s) {
-  // Weights: red dwarf 25, ice field 20, nebula 20, gas giant 20, pulsar 10, dead gate 5.
+  const auto era = static_cast<uint8_t>(eraForReach(s.reach));
   const uint8_t r = rollPercent(s);
-  if (r < 25) return StarType::RedDwarf;
-  if (r < 45) return StarType::IceField;
-  if (r < 65) return StarType::Nebula;
-  if (r < 85) return StarType::GasGiant;
-  if (r < 95) return StarType::Pulsar;
-  return StarType::DeadGate;
+  // Walked in this order so the Outer rim rolls exactly as it did before eras.
+  static const StarType ORDER[static_cast<uint8_t>(StarType::Count)] = {
+      StarType::RedDwarf, StarType::IceField, StarType::Nebula,     StarType::GasGiant,  StarType::Pulsar,
+      StarType::DeadGate, StarType::Ruins,    StarType::BinaryStar, StarType::BlackHole, StarType::Void,
+  };
+  uint8_t at = 0;
+  for (uint8_t i = 0; i < static_cast<uint8_t>(StarType::Count); i++) {
+    at = static_cast<uint8_t>(at + ERA_STAR_WEIGHTS[era][static_cast<uint8_t>(ORDER[i])]);
+    if (r < at) return ORDER[i];
+  }
+  return StarType::RedDwarf;
 }
 
 uint8_t level(const State& s, const System sys) { return s.levels[static_cast<uint8_t>(sys)]; }
@@ -546,6 +563,8 @@ uint64_t jumpChargeNeeded(const State& s) {
                            moduleBonus(s, ModuleEffect::JumpCharge);
   const int32_t clamped = std::max<int32_t>(-50, std::min<int32_t>(75, discount));
   v = scaleRatio(v, static_cast<uint32_t>(100 - clamped), 100);
+  // A black hole's gravity slings the ship out for less charge.
+  if (s.starType == static_cast<uint8_t>(StarType::BlackHole)) v = scaleRatio(v, 60, 100);
   return std::max<uint64_t>(v, 1);
 }
 
@@ -572,6 +591,17 @@ int32_t moduleScore(const Module& m) {
     if (e < static_cast<uint8_t>(ModuleEffect::Count)) score += MODULE_WEIGHT[e] * m.value[k];
   }
   return score;
+}
+
+Era eraForReach(const uint16_t reach) {
+  return static_cast<Era>((reach / REACHES_PER_ERA) % static_cast<uint8_t>(Era::Count));
+}
+
+uint16_t eraNumber(const uint16_t reach) { return static_cast<uint16_t>(reach / REACHES_PER_ERA + 1); }
+
+uint8_t starTypeChance(const Era era, const StarType type) {
+  if (era >= Era::Count || type >= StarType::Count) return 0;
+  return ERA_STAR_WEIGHTS[static_cast<uint8_t>(era)][static_cast<uint8_t>(type)];
 }
 
 uint16_t colonyFuelPermille(const Colony& c) {
@@ -666,7 +696,13 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
   uint32_t colonyPermille = 0;
   for (uint8_t i = 0; i < s.colonyCount; i++) colonyPermille += colonyFuelPermille(s.colony[i]);
   r.colonyPermille = static_cast<uint16_t>(std::min<uint32_t>(5000, colonyPermille));
-  r.starPermille = (star == StarType::GasGiant && t >= EXPEDITION_SECONDS) ? 300 : 0;
+  // A gas giant refuels expeditions; the empty void leaves nothing to do but read.
+  if (star == StarType::GasGiant && t >= EXPEDITION_SECONDS) {
+    r.starPermille = 300;
+  } else if (star == StarType::Void) {
+    r.starPermille = 250;
+  }
+  r.bonusStar = static_cast<uint8_t>(star);
   r.modulePermille =
       static_cast<int16_t>(std::max<int32_t>(-500, std::min<int32_t>(5000, 10 * moduleBonus(s, ModuleEffect::Fuel))));
   r.lucky = rollChance(s, 5u + bestLuckOnDuty(s) / 2);
@@ -720,11 +756,13 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
     uint32_t found = rollRange(s, 1, 3) + sensors / 2;
     if (star == StarType::IceField) found += found / 2;
     if (star == StarType::Nebula) found -= found / 4;
+    if (star == StarType::Void) found -= found / 2;
     data += found;
     if (s.surveysHere < UINT8_MAX) s.surveysHere++;
     // Bad-luck protection: +5 points for every survey since the last derelict.
     uint32_t derelictChance = derelictChancePercent(s) + 5u * s.surveysSinceDerelict;
     if (star == StarType::Nebula) derelictChance *= 2;
+    if (star == StarType::Ruins) derelictChance *= 3;
     if (rollChance(s, boostedChance(std::min<uint32_t>(95, derelictChance), t, SURVEY_SECONDS, EXPEDITION_SECONDS))) {
       r.derelict = true;
       s.surveysSinceDerelict = 0;
@@ -732,7 +770,8 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
       data += 3;
       if (rollChance(s, 25u + medic)) sleeper = true;
       // Bad-luck protection: +10 points for every derelict without a module.
-      if (rollChance(s, std::min<uint32_t>(95, 30u + 10u * s.derelictsSinceModule))) {
+      const uint32_t ruinsBonus = star == StarType::Ruins ? 20 : 0;
+      if (rollChance(s, std::min<uint32_t>(95, 30u + ruinsBonus + 10u * s.derelictsSinceModule))) {
         s.derelictsSinceModule = 0;
         s.modulesFound = satAdd32(s.modulesFound, 1);
         r.module = rollModule(s);
@@ -764,6 +803,10 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
 
   if (survey || t >= EXPEDITION_SECONDS) applyTwist(s, r, parts, data);
   if (star == StarType::RedDwarf) parts += parts / 5;
+  if (star == StarType::BinaryStar) {
+    parts += parts / 4;
+    data += data / 4;
+  }
   // The Engineer and Scientist on duty add 2% per point; modules add or take away.
   parts = applyPercent(parts, 2 * dutyStat(s, Role::Engineer) + moduleBonus(s, ModuleEffect::Parts));
   data = applyPercent(data, 2 * dutyStat(s, Role::Scientist) + moduleBonus(s, ModuleEffect::Data));
@@ -828,6 +871,7 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
       wear(s, static_cast<uint8_t>(std::max<int32_t>(1, wearRoll)));
     }
     if (star == StarType::Pulsar) wear(s, 15);
+    if (star == StarType::BlackHole) wear(s, 10);
     s.starsVisited = satAdd32(s.starsVisited, 1);
     s.distanceDeciLy = satAdd32(s.distanceDeciLy, rollRange(s, 40, 99));
     s.surveysHere = 0;
@@ -839,6 +883,7 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
       uint16_t founderStats = 0;
       const uint8_t founders = retireCrew(s, r, founderStats);
       foundColony(s, r, founders, founderStats);
+      r.newEra = s.reach % REACHES_PER_ERA == 0;
     }
     const StarType next = rollStarType(s);
     s.starType = static_cast<uint8_t>(next);
@@ -1298,6 +1343,10 @@ size_t serialize(const State& s, uint8_t* buf, const size_t len) {
   w.u16(r.foundedSeed);
   w.u8(r.foundedJoined ? 1 : 0);
 
+  // Version 7: galaxy eras.
+  w.u8(r.bonusStar);
+  w.u8(r.newEra ? 1 : 0);
+
   if (!w.ok) return 0;
   w.u32(fnv1a(buf, w.pos));
   return w.ok ? w.pos : 0;
@@ -1415,6 +1464,13 @@ bool deserialize(State& out, const uint8_t* buf, const size_t len) {
     r.foundedSeed = rd.u16();
     r.foundedJoined = rd.u8() != 0;
   }
+  if (version >= 7) {
+    r.bonusStar = rd.u8();
+    r.newEra = rd.u8() != 0;
+  } else if (r.starPermille > 0) {
+    r.bonusStar = static_cast<uint8_t>(StarType::GasGiant);  // the only bonus star before eras
+  }
+  if (r.bonusStar >= static_cast<uint8_t>(StarType::Count)) r.bonusStar = 0;
 
   const size_t payloadLen = rd.pos;
   const uint32_t checksum = rd.u32();

@@ -321,6 +321,9 @@ void DriftShipActivity::drawRecordsPage(const int top, const int bottom) const {
   snprintf(value, sizeof(value), tr(STR_DRIFT_SHIP_MINUTES_VALUE),
            static_cast<unsigned long>(state.longestSessionSeconds / 60));
   row(tr(STR_DRIFT_SHIP_REC_LONGEST));
+  snprintf(value, sizeof(value), "%u - %s", static_cast<unsigned>(DriftShip::eraNumber(state.reach)),
+           DriftShip::eraName(DriftShip::eraForReach(state.reach)));
+  row(tr(STR_DRIFT_SHIP_REC_ERA));
   DriftShip::formatCompactNumber(state.starsVisited, value, sizeof(value));
   row(tr(STR_DRIFT_SHIP_STARS));
   snprintf(value, sizeof(value), "%lu.%lu", static_cast<unsigned long>(state.distanceDeciLy / 10),
