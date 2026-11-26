@@ -226,8 +226,13 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
 
   // --- Session receipt ---
   const SessionReport& rep = s.last;
-  snprintf(line, sizeof(line), tr(STR_DRIFT_SHIP_SESSION), static_cast<unsigned long>(rep.sessionNumber),
-           static_cast<unsigned long>(rep.seconds / 60));
+  if (rep.sittings > 1) {
+    snprintf(line, sizeof(line), tr(STR_DRIFT_SHIP_SESSION_SITTINGS), static_cast<unsigned long>(rep.sessionNumber),
+             static_cast<unsigned long>(rep.seconds / 60), static_cast<unsigned>(rep.sittings));
+  } else {
+    snprintf(line, sizeof(line), tr(STR_DRIFT_SHIP_SESSION), static_cast<unsigned long>(rep.sessionNumber),
+             static_cast<unsigned long>(rep.seconds / 60));
+  }
   r.drawText(UI_10_FONT_ID, x0, y, line, true, EpdFontFamily::BOLD);
   y += r.getLineHeight(UI_10_FONT_ID);
 

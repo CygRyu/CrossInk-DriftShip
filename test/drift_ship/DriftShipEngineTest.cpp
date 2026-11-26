@@ -185,15 +185,17 @@ uint32_t testFnv1a(const uint8_t* data, const size_t n) {
 }
 }  // namespace
 
-// Rebuilds an older save layout from a current one: drops the version 4 block,
-// then the version 3 crew block, then for version 1 the records block, and
+// Rebuilds an older save layout from a current one: drops the version 5 block,
+// then the version 4 block, then the version 3 crew block, then for version 1 the records block, and
 // re-signs the result.
 size_t makeLegacySave(const State& state, const uint8_t version, uint8_t* out) {
   uint8_t cur[SAVE_BUFFER_SIZE];
   const size_t len = serialize(state, cur, sizeof(cur));
+  constexpr size_t v5Block = 15;
   constexpr size_t v4Block = 2;
   const size_t v3Block = 18 + 1 + 16u * state.crewCount + 1 + 4u * state.moduleCount + 29;
-  size_t payload = len - 4 - v4Block;
+  size_t payload = len - 4 - v5Block;
+  if (version <= 3) payload -= v4Block;
   if (version <= 2) payload -= v3Block;
   memcpy(out, cur, payload);
   if (version == 1) {
@@ -340,6 +342,20 @@ TEST(DriftShipEngine, VersionThreeSavesStillLoad) {
   EXPECT_EQ(b.last.variancePermille, 0);
 }
 
+TEST(DriftShipEngine, VersionFourSavesStillLoad) {
+  const State a = play(45, 40);
+  uint8_t v4[SAVE_BUFFER_SIZE];
+  const size_t len = makeLegacySave(a, 4, v4);
+  State b;
+  ASSERT_TRUE(deserialize(b, v4, len));
+  EXPECT_EQ(b.version, SAVE_VERSION);
+  EXPECT_EQ(b.fuel, a.fuel);
+  EXPECT_EQ(b.last.variancePermille, a.last.variancePermille);
+  EXPECT_EQ(b.sittingCount, 0);
+  EXPECT_EQ(b.sittingClock, 0u);
+  EXPECT_EQ(b.last.sittings, 1);
+}
+
 TEST(DriftShipEngine, SameReadingTimeVaries) {
   State s;
   bool sawDifferentFuel = false;
@@ -352,4 +368,176 @@ TEST(DriftShipEngine, SameReadingTimeVaries) {
     previous = s.last.fuel;
   }
   EXPECT_TRUE(sawDifferentFuel);
+}
+
+// --- Session merging ---
+
+namespace {
+constexpr uint32_t CLOCK = 7;
+
+// Mimics DriftShipStore::onReadingSession with the snapshot file in memory.
+struct Device {
+  State state;
+  State snapshot;
+  bool hasSnapshot = false;
+  SessionLog log;
+
+  SittingOutcome sit(const uint32_t activeSeconds, const uint32_t endTime, const uint32_t clockId = CLOCK) {
+    State scratch;
+    const bool loaded = sittingNeedsSnapshot(state, activeSeconds, endTime, clockId) && hasSnapshot;
+    if (loaded) scratch = snapshot;
+    const SittingOutcome out = applySitting(state, scratch, loaded, activeSeconds, endTime, clockId, Doctrine::Steady);
+    if (out.writeSnapshot) {
+      snapshot = scratch;
+      hasSnapshot = true;
+    }
+    if (out.scored) upsertLogEntry(log, makeLogEntry(state));
+    return out;
+  }
+};
+}  // namespace
+
+TEST(DriftShipMerge, MergingInsideTheCapNeverEarnsLess) {
+  for (uint32_t a = 2; a <= 88; a++) {
+    for (uint32_t b = 2; a + b <= 90; b++) {
+      EXPECT_GE(baseFuelForSeconds((a + b) * MIN), baseFuelForSeconds(a * MIN) + baseFuelForSeconds(b * MIN))
+          << a << "+" << b;
+    }
+  }
+}
+
+TEST(DriftShipMerge, CloseSittingsReplayAsOneSession) {
+  Device d;
+  for (int i = 0; i < 20; i++) d.sit(25 * MIN, 100000u + i * 20000u);  // separate sessions
+  const State before = d.state;
+
+  // 20 minutes, a 3-minute break, then 25 more minutes.
+  uint32_t t = 600000;
+  d.sit(20 * MIN, t);
+  t += 3 * MIN + 25 * MIN;
+  const SittingOutcome out = d.sit(25 * MIN, t);
+  EXPECT_TRUE(out.scored);
+  EXPECT_FALSE(out.writeSnapshot);
+
+  // Exactly what one 45-minute session from the same start would have earned.
+  State single = before;
+  applySession(single, 45 * MIN, Doctrine::Steady);
+  EXPECT_EQ(d.state.sessions, single.sessions);
+  EXPECT_EQ(d.state.creditedSeconds, single.creditedSeconds);
+  EXPECT_EQ(d.state.fuel, single.fuel);
+  EXPECT_EQ(d.state.parts, single.parts);
+  EXPECT_EQ(d.state.rng, single.rng);
+  EXPECT_EQ(d.state.last.fuel, single.last.fuel);
+  EXPECT_EQ(d.state.last.seconds, 45 * MIN);
+  EXPECT_EQ(d.state.last.sittings, 2);
+  EXPECT_TRUE(d.state.last.watches & WATCH_EXPEDITION);
+
+  // The log shows one session, not two.
+  EXPECT_EQ(d.log.entries[d.log.count - 1].sessionNumber, 21u);
+  EXPECT_EQ(d.log.entries[d.log.count - 1].minutes, 45);
+  EXPECT_EQ(d.log.entries[d.log.count - 2].sessionNumber, 20u);
+}
+
+TEST(DriftShipMerge, ChainsOfSittingsKeepMerging) {
+  Device d;
+  d.sit(20 * MIN, 50000);
+  uint32_t t = 50000;
+  for (int i = 0; i < 3; i++) {
+    t += 2 * MIN + 15 * MIN;
+    d.sit(15 * MIN, t);
+  }
+  EXPECT_EQ(d.state.sessions, 1u);
+  EXPECT_EQ(d.state.last.seconds, 65 * MIN);
+  EXPECT_EQ(d.state.last.sittings, 4);
+  EXPECT_EQ(d.log.count, 1);
+}
+
+TEST(DriftShipMerge, ShortSittingsAddUpToASession) {
+  Device d;
+  d.sit(20 * MIN, 1000);  // start the voyage
+  const uint32_t sessions = d.state.sessions;
+  d.sit(20 * MIN, 1000 + 60 * MIN);  // a separate session, far away
+  EXPECT_EQ(d.state.sessions, sessions + 1);
+
+  // Three 50-second sittings a minute apart: too short alone, a session together.
+  uint32_t t = 100000;
+  EXPECT_FALSE(d.sit(50, t).scored);
+  t += 60 + 50;
+  EXPECT_FALSE(d.sit(50, t).scored);
+  t += 60 + 50;
+  const SittingOutcome out = d.sit(50, t);
+  EXPECT_TRUE(out.scored);
+  EXPECT_EQ(d.state.sessions, sessions + 2);
+  EXPECT_EQ(d.state.last.seconds, 150u);
+  EXPECT_EQ(d.state.last.sittings, 3);
+}
+
+TEST(DriftShipMerge, GapsClocksAndTheCapEndAChain) {
+  Device d;
+  d.sit(20 * MIN, 10000);
+  ASSERT_EQ(d.state.sessions, 1u);
+
+  // 5 minutes or more apart: a new session.
+  EXPECT_FALSE(continuesSitting(d.state, 10 * MIN, 10000 + 5 * MIN + 10 * MIN, CLOCK));
+  EXPECT_TRUE(continuesSitting(d.state, 10 * MIN, 10000 + 4 * MIN + 10 * MIN, CLOCK));
+  // A different clock, no clock, or a clock that went backwards.
+  EXPECT_FALSE(continuesSitting(d.state, 10 * MIN, 10000 + 11 * MIN, CLOCK + 1));
+  EXPECT_FALSE(continuesSitting(d.state, 10 * MIN, 10000 + 11 * MIN, 0));
+  EXPECT_FALSE(continuesSitting(d.state, 10 * MIN, 9000, CLOCK));
+  // Past the 90-minute cap together: a new session.
+  EXPECT_TRUE(continuesSitting(d.state, 70 * MIN, 10000 + 71 * MIN, CLOCK));
+  EXPECT_FALSE(continuesSitting(d.state, 71 * MIN, 10000 + 72 * MIN, CLOCK));
+
+  d.sit(71 * MIN, 10000 + 72 * MIN);
+  EXPECT_EQ(d.state.sessions, 2u);
+  EXPECT_EQ(d.state.last.sittings, 1);
+}
+
+TEST(DriftShipMerge, MissingSnapshotScoresTheSittingAlone) {
+  Device d;
+  d.sit(20 * MIN, 10000);
+  d.hasSnapshot = false;  // e.g. the snapshot file was lost
+  d.sit(20 * MIN, 10000 + 22 * MIN);
+  EXPECT_EQ(d.state.sessions, 2u);
+  EXPECT_EQ(d.state.last.seconds, 20 * MIN);
+}
+
+TEST(DriftShipMerge, NoClockNeverMerges) {
+  Device d;
+  d.sit(20 * MIN, 0, 0);
+  const SittingOutcome out = d.sit(20 * MIN, 0, 0);
+  EXPECT_FALSE(out.writeSnapshot);
+  EXPECT_EQ(d.state.sessions, 2u);
+}
+
+TEST(DriftShipMerge, LogUpsertReplacesTheSameSession) {
+  SessionLog log;
+  LogEntry e;
+  e.sessionNumber = 4;
+  e.minutes = 10;
+  upsertLogEntry(log, e);
+  e.minutes = 25;
+  upsertLogEntry(log, e);
+  ASSERT_EQ(log.count, 1);
+  EXPECT_EQ(log.entries[0].minutes, 25);
+  e.sessionNumber = 5;
+  upsertLogEntry(log, e);
+  EXPECT_EQ(log.count, 2);
+}
+
+TEST(DriftShipMerge, SittingStateRoundTrips) {
+  Device d;
+  d.sit(20 * MIN, 10000);
+  d.sit(20 * MIN, 10000 + 22 * MIN);
+  uint8_t buf[SAVE_BUFFER_SIZE];
+  const size_t len = serialize(d.state, buf, sizeof(buf));
+  ASSERT_GT(len, 0u);
+  State loaded;
+  ASSERT_TRUE(deserialize(loaded, buf, len));
+  EXPECT_EQ(loaded.sittingEnd, d.state.sittingEnd);
+  EXPECT_EQ(loaded.sittingClock, CLOCK);
+  EXPECT_EQ(loaded.sittingSeconds, 40 * MIN);
+  EXPECT_EQ(loaded.sittingCount, 2);
+  EXPECT_TRUE(loaded.sittingScored);
+  EXPECT_EQ(loaded.last.sittings, 2);
 }
