@@ -3,6 +3,7 @@ add_executable(DriftShipEngineTest
   ${REPO_ROOT}/src/game/DriftShipEngine.cpp
   ${REPO_ROOT}/src/game/DriftShipCrew.cpp
   ${REPO_ROOT}/src/game/DriftShipColony.cpp
+  ${REPO_ROOT}/src/game/DriftShipStory.cpp
 )
 
 target_include_directories(DriftShipEngineTest PRIVATE

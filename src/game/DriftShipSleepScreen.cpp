@@ -166,7 +166,7 @@ int drawWrappedText(const GfxRenderer& r, const int fontId, const int x, int y, 
   return y;
 }
 
-void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReserve) {
+void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReserve, const char* story) {
   int top = 0;
   int right = 0;
   int bottom = 0;
@@ -330,8 +330,12 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
   // --- Ship numbers: a 3x3 grid pinned to the bottom ---
   const int cellHeight = r.getLineHeight(SMALL_FONT_ID) + r.getLineHeight(UI_12_FONT_ID) + 10;
   const int pinnedTop = height - bottom - bottomReserve - 16 - cellHeight * 3;
+  // The captain's log line comes first, then what happened. Both fill the
+  // space above the grid; anything that doesn't fit is cut.
+  if (story && story[0]) {
+    y = drawWrappedText(r, SMALL_FONT_ID, x0, y, contentWidth, story, pinnedTop - 16) + 4;
+  }
   if (events[0]) {
-    // Events fill the space above the grid; anything that doesn't fit is cut.
     y = drawWrappedText(r, SMALL_FONT_ID, x0, y, contentWidth, events, pinnedTop - 16);
   }
   const int gridTop = std::max(y + 8, pinnedTop);

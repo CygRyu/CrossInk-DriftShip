@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include "DriftShipEngine.h"
@@ -23,7 +24,14 @@ bool loadLog(SessionLog& log);
 // idle-filtered reading time that did not come from automatic page turns.
 void onReadingSession(uint32_t activeSeconds);
 
-// Hard reset: deletes the save, its backup and the ship log. The next session starts a new voyage.
+// Loads the captain's log line written for the state's latest session.
+// Returns false (and writes an empty string) when there is none.
+bool loadStory(const State& state, char* out, size_t len);
+
+// Event packs are plain-text files in this folder on the SD card.
+constexpr char EVENT_PACK_DIR[] = "/driftship/events";
+
+// Hard reset: deletes the save, its backup, the ship log and the captain's log. The next session starts a new voyage.
 bool hardReset();
 
 }  // namespace DriftShip

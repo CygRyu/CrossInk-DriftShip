@@ -16,6 +16,8 @@
 - Drift Ship colonies come alive: each colony has a name, a specialty (Mining, Science or Shipyard) and a population that grows a little with every session you read, faster with the crew who retired there. Colonies add Fuel (more as they grow) and send Parts, Data or hull repairs after the ship, and now and then a report arrives on the sleep screen: a boom, a fever, supplies, a hull section or a trained crew member. Existing colonies are brought to life when you update.
 - New Colonies page in the Drift Ship screen, and total population and colony reports on the Records page.
 - Drift Ship galaxy eras: every 5 reaches the ship crosses into a new part of the galaxy (Outer rim, Ruin belt, Dense core, Deep void, Shattered arm, Far galaxy) with its own mix of stars and its own sky on the sleep screen. Four new star types appear in later eras: ancient ruins full of derelicts, binary stars, black holes that sling the ship onward at a cost to the hull, and the empty void, where there is little to find but reading pays extra Fuel.
+- Drift Ship captain's log: every session adds a short story line to the sleep screen, built from places, findings, twists and crew reactions so it rarely repeats. Places change with the galaxy era, and crew react according to their traits.
+- Drift Ship event packs: add your own places, findings, twists and crew reactions as plain-text files in `/driftship/events/` on the SD card. See `docs/drift-ship-event-packs.md`.
 
 ### Fixed
 

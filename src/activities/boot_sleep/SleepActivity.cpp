@@ -44,6 +44,7 @@
 #include "fontIds.h"
 #include "game/DriftShipSleepScreen.h"
 #include "game/DriftShipStore.h"
+#include "game/DriftShipStory.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
 
@@ -968,7 +969,10 @@ void SleepActivity::renderDriftShipSleepScreen() const {
     return renderDefaultSleepScreen();
   }
   DriftShip::load(*state);
-  DriftShip::drawSleepScreen(renderer, *state);
+  // The captain's log line is optional: without memory the screen just skips it.
+  auto story = makeUniqueNoThrow<char[]>(DriftShip::STORY_LEN);
+  if (story) DriftShip::loadStory(*state, story.get(), DriftShip::STORY_LEN);
+  DriftShip::drawSleepScreen(renderer, *state, 0, story ? story.get() : nullptr);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
 }
 

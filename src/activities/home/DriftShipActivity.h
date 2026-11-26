@@ -4,6 +4,7 @@
 
 #include "activities/Activity.h"
 #include "game/DriftShipEngine.h"
+#include "game/DriftShipStory.h"
 
 // Read-only Drift Ship screens: the ship view, systems, the ship log and
 // lifetime records, plus the crew, salvaged modules and colonies. The game itself plays without this screen; it is only
@@ -24,6 +25,7 @@ class DriftShipActivity final : public Activity {
   // ActivityManager), so these ~1 KB never touch the task stack.
   DriftShip::State state;
   DriftShip::SessionLog log;
+  char story[DriftShip::STORY_LEN] = "";
   Page page = Page::Ship;
   uint8_t crewStart = 0;  // first crew member on the current crew screen
   // How many crew the last crew screen fit; set while drawing.

@@ -9,7 +9,9 @@ struct State;
 // through the current reach, the latest session's receipt and the ship's
 // numbers. Clears the frame buffer first; the caller owns the display refresh.
 // bottomReserve keeps that many pixels free at the bottom (for button hints).
-void drawSleepScreen(const GfxRenderer& renderer, const State& state, int bottomReserve = 0);
+// story is the captain's log line for the latest session, or null for none.
+void drawSleepScreen(const GfxRenderer& renderer, const State& state, int bottomReserve = 0,
+                     const char* story = nullptr);
 
 // Draws text word-wrapped to maxWidth, stopping before a line would cross
 // maxY. Returns the y below the last line drawn. Words longer than a line are
