@@ -30,8 +30,16 @@ enum class LoadResult : uint8_t { Ok, Missing, Corrupt, NewerFormat };
 LoadResult loadFrom(const char* path, State& out) {
   FsFile f;
   if (!Storage.openFileForRead("DSHIP", path, f)) return LoadResult::Missing;
-  uint8_t buf[SAVE_BUFFER_SIZE];
-  const int n = f.read(buf, sizeof(buf));
+  // The save holds the whole crew roster (up to SAVE_BUFFER_SIZE bytes), too
+  // much for the caller's stack, so the read buffer lives on the heap briefly.
+  auto bufOwner = makeUniqueNoThrow<uint8_t[]>(SAVE_BUFFER_SIZE);
+  if (!bufOwner) {
+    f.close();
+    LOG_ERR("DSHIP", "No memory to read the save");
+    return LoadResult::Corrupt;
+  }
+  uint8_t* buf = bufOwner.get();
+  const int n = f.read(buf, SAVE_BUFFER_SIZE);
   f.close();
   if (n <= 0) return LoadResult::Corrupt;
   const size_t len = static_cast<size_t>(n);
@@ -125,8 +133,13 @@ bool save(const State& state) {
     LOG_ERR("DSHIP", "Refusing to overwrite a newer-format save");
     return false;
   }
-  uint8_t buf[SAVE_BUFFER_SIZE];
-  const size_t len = serialize(state, buf, sizeof(buf));
+  auto bufOwner = makeUniqueNoThrow<uint8_t[]>(SAVE_BUFFER_SIZE);
+  if (!bufOwner) {
+    LOG_ERR("DSHIP", "No memory to write the save");
+    return false;
+  }
+  uint8_t* buf = bufOwner.get();
+  const size_t len = serialize(state, buf, SAVE_BUFFER_SIZE);
   if (len == 0) {
     LOG_ERR("DSHIP", "Save buffer too small");
     return false;
@@ -176,28 +189,33 @@ bool save(const State& state) {
 
 void onReadingSession(const uint32_t activeSeconds) {
   if (activeSeconds < MIN_SESSION_SECONDS) return;
-  State state;
-  load(state);
+  // State (~600 bytes with a full crew) and the ship log (~400 bytes) go on the
+  // heap for this one-off update rather than on the reader's stack.
+  auto state = makeUniqueNoThrow<State>();
+  if (!state) {
+    LOG_ERR("DSHIP", "No memory for the game state");
+    return;
+  }
+  load(*state);
   if (s_blockSave) return;
   const auto doctrine = static_cast<Doctrine>(SETTINGS.driftShipDoctrine);
-  if (!applySession(state, activeSeconds, doctrine)) return;
-  if (save(state)) {
-    // Built after the save succeeds so the log never shows a session the
-    // game itself lost.
-    // The log is ~400 bytes, so it goes on the heap for this one-off update
-    // rather than on the reader's stack.
-    auto log = makeUniqueNoThrow<SessionLog>();
-    if (log) {
-      loadLog(*log);
-      pushLogEntry(*log, makeLogEntry(state));
-      saveLog(*log);
-    } else {
-      LOG_ERR("DSHIP", "No memory for the ship log");
-    }
-    LOG_INF("DSHIP", "Session %lu: %lus, +%llu fuel, star %u/%u", static_cast<unsigned long>(state.sessions),
-            static_cast<unsigned long>(activeSeconds), static_cast<unsigned long long>(state.last.fuel),
-            static_cast<unsigned>(state.star + 1), static_cast<unsigned>(STARS_PER_REACH));
+  if (!applySession(*state, activeSeconds, doctrine)) return;
+  if (!save(*state)) return;
+
+  // Built after the save succeeds so the log never shows a session the game
+  // itself lost.
+  auto log = makeUniqueNoThrow<SessionLog>();
+  if (log) {
+    loadLog(*log);
+    pushLogEntry(*log, makeLogEntry(*state));
+    saveLog(*log);
+  } else {
+    LOG_ERR("DSHIP", "No memory for the ship log");
   }
+  LOG_INF("DSHIP", "Session %lu: %lus, +%llu fuel, star %u/%u, crew %u", static_cast<unsigned long>(state->sessions),
+          static_cast<unsigned long>(activeSeconds), static_cast<unsigned long long>(state->last.fuel),
+          static_cast<unsigned>(state->star + 1), static_cast<unsigned>(STARS_PER_REACH),
+          static_cast<unsigned>(state->crewCount));
 }
 
 bool hardReset() {

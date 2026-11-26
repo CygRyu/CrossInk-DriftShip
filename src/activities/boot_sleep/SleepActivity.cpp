@@ -961,9 +961,14 @@ void SleepActivity::renderDriftShipSleepScreen() const {
   // The reader commits its session (and the game's turn) before this runs on
   // devices without PSRAM; rendersBeforeExit() also returns false for this
   // mode, so the screen always shows the session that just ended.
-  DriftShip::State state;
-  DriftShip::load(state);
-  DriftShip::drawSleepScreen(renderer, state);
+  // The state holds the crew roster (~600 bytes), so it lives on the heap.
+  auto state = makeUniqueNoThrow<DriftShip::State>();
+  if (!state) {
+    LOG_ERR("SLP", "No memory for the Drift Ship state");
+    return renderDefaultSleepScreen();
+  }
+  DriftShip::load(*state);
+  DriftShip::drawSleepScreen(renderer, *state);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
 }
 
