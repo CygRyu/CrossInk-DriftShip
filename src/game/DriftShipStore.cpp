@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cstring>
 #include <ctime>
+#include <iterator>
+#include <numeric>
 
 #include "CrossPointSettings.h"
 
@@ -78,11 +80,14 @@ void readSittingClock(const State& state, uint32_t& now, uint32_t& clockId) {
     // A new power-on: derive an id that differs from the previous one. The
     // saved chain end and session counts are mixed in, so even an identical
     // boot timing gives a different id.
-    uint32_t h = 2166136261u;
-    for (const uint32_t v : {state.sittingEnd, state.sittingClock, state.sessions, state.creditedSeconds,
-                             static_cast<uint32_t>(micros()), static_cast<uint32_t>(t)}) {
-      h = (h ^ v) * 16777619u;
-    }
+    const uint32_t mix[] = {state.sittingEnd,
+                            state.sittingClock,
+                            state.sessions,
+                            state.creditedSeconds,
+                            static_cast<uint32_t>(micros()),
+                            static_cast<uint32_t>(t)};
+    const uint32_t h = std::accumulate(std::begin(mix), std::end(mix), 2166136261u,
+                                       [](const uint32_t acc, const uint32_t v) { return (acc ^ v) * 16777619u; });
     s_bootClockId = h > CLOCK_RTC ? h : h + 2;
     s_bootClockMagic = BOOT_CLOCK_MAGIC;
   }
