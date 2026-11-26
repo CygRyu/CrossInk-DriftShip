@@ -40,6 +40,21 @@ Refer to https://freeink.org/llms.txt for guidance.
 - SD-font section builds cost ~38-50KB at cold start; the 4-style advance-table prewarm
   (~30KB incl. 16KB contiguous scratch) dominates and is skipped below 80KB free.
 
+## CI / Static Analysis
+
+- CI cppcheck fails on **low** defects too. `useStlAlgorithm` flags range-for loops that sum, transform or
+  set a flag (e.g. an FNV hash over `{a, b, c}`, `for (auto& x : arr) x %= n;`). Use `std::accumulate` /
+  `std::transform` / `std::any_of`, or an index loop.
+- CI does not run the native tests. Build them locally: `cmake -S test -B build && make -C build DriftShipEngineTest`.
+
+## Drift Ship
+
+- Pure logic lives in `src/game/DriftShipEngine` (+ Crew, Colony, Story); the store and screens do I/O and `tr()`.
+  Keep new rules in the engine so the native tests cover them.
+- Bumping `DriftShip::SAVE_VERSION`: add the new block at the end of `serialize()`, read it under
+  `if (version >= N)`, and update `makeLegacySave()` block sizes in `test/drift_ship/DriftShipEngineTest.cpp`.
+- Story text never touches the game RNG (`storySeed`); event-pack text is never passed to printf (`expandTemplate`).
+
 ## Misc Repo Gotchas
 
 - POSIX TZ signs are inverted from ISO 8601 in `TimeStore::applyTimezone()`: `"UTC-1"` means UTC+1.
