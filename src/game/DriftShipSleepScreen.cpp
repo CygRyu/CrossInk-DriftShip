@@ -246,6 +246,7 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
   appendMultiplier(line, sizeof(line), rep.crewPermille, tr(STR_DRIFT_SHIP_CREW_BONUS));
   appendMultiplier(line, sizeof(line), rep.starPermille, tr(STR_DRIFT_SHIP_GAS_GIANT_BONUS));
   appendMultiplier(line, sizeof(line), rep.modulePermille, tr(STR_DRIFT_SHIP_MODULES_BONUS));
+  appendMultiplier(line, sizeof(line), rep.variancePermille, tr(STR_DRIFT_SHIP_VARIANCE));
   if (rep.lucky) {
     char lucky[32];
     snprintf(lucky, sizeof(lucky), "x2 %s", tr(STR_DRIFT_SHIP_LUCKY));

@@ -87,6 +87,8 @@ struct SessionReport {
   ModuleEvent moduleEvent = ModuleEvent::None;
   Module module;  // valid when moduleEvent != None
   uint8_t retired = 0;
+  // Save version 4+.
+  int16_t variancePermille = 0;  // this session's random Fuel swing, -150..+150
 };
 
 struct State {
@@ -200,7 +202,8 @@ int32_t moduleScore(const Module& module);
 // Chance in percent that the next woken sleeper is Legendary.
 uint8_t legendaryChancePercent(const State& state);
 
-// Hull condition a normal (not clean) jump costs, after Hull upgrades.
+// Average hull condition a normal (not clean) jump costs, after Hull upgrades,
+// the Pilot and modules. Each real jump lands within 3 points of it.
 uint8_t jumpWear(const State& state);
 
 // Base chance in percent that a survey finds a derelict, before star effects.
@@ -222,7 +225,7 @@ void formatCompactNumber(uint64_t value, char* buf, size_t len);
 
 // --- Persistence (format is little-endian, field by field) ---
 
-constexpr uint8_t SAVE_VERSION = 3;  // v2 adds records, v3 crew and modules; older saves still load
+constexpr uint8_t SAVE_VERSION = 4;  // v2 records, v3 crew and modules, v4 Fuel variance; older saves load
 // Big enough for a full crew roster. Callers keep it off the stack.
 constexpr size_t SAVE_BUFFER_SIZE = 512;
 

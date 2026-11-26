@@ -185,13 +185,16 @@ uint32_t testFnv1a(const uint8_t* data, const size_t n) {
 }
 }  // namespace
 
-// Rebuilds an older save layout from a current one: drops the version 3 crew
-// block, and for version 1 the records block too, then re-signs the result.
+// Rebuilds an older save layout from a current one: drops the version 4 block,
+// then the version 3 crew block, then for version 1 the records block, and
+// re-signs the result.
 size_t makeLegacySave(const State& state, const uint8_t version, uint8_t* out) {
   uint8_t cur[SAVE_BUFFER_SIZE];
   const size_t len = serialize(state, cur, sizeof(cur));
+  constexpr size_t v4Block = 2;
   const size_t v3Block = 18 + 1 + 16u * state.crewCount + 1 + 4u * state.moduleCount + 29;
-  size_t payload = len - 4 - v3Block;
+  size_t payload = len - 4 - v4Block;
+  if (version <= 2) payload -= v3Block;
   memcpy(out, cur, payload);
   if (version == 1) {
     constexpr size_t recordsAt = 83;
@@ -239,7 +242,7 @@ TEST(DriftShipEngine, RecordsTrackTheBest) {
   applySession(s, 80 * MIN, Doctrine::Steady);
   applySession(s, 10 * MIN, Doctrine::Steady);
   EXPECT_EQ(s.longestSessionSeconds, 80u * MIN);
-  EXPECT_GE(s.bestSessionFuel, baseFuelForSeconds(80 * MIN));
+  EXPECT_GE(s.bestSessionFuel, baseFuelForSeconds(80 * MIN) * 85 / 100);  // allows the Fuel variance
 }
 
 TEST(DriftShipEngine, LogKeepsTheNewestEntries) {
@@ -324,4 +327,29 @@ TEST(DriftShipEngine, DISABLED_PrintCrew) {
   }
   printf("modules=%u legacy=%u retired=%u legendary=%u found=%u\n", s.moduleCount, s.legacyPermille, s.crewRetired,
          s.legendaryWoken, s.modulesFound);
+}
+
+TEST(DriftShipEngine, VersionThreeSavesStillLoad) {
+  const State a = play(45, 80);
+  uint8_t v3[SAVE_BUFFER_SIZE];
+  const size_t len = makeLegacySave(a, 3, v3);
+  State b;
+  ASSERT_TRUE(deserialize(b, v3, len));
+  EXPECT_EQ(b.version, SAVE_VERSION);
+  EXPECT_EQ(b.crewCount, a.crewCount);
+  EXPECT_EQ(b.last.variancePermille, 0);
+}
+
+TEST(DriftShipEngine, SameReadingTimeVaries) {
+  State s;
+  bool sawDifferentFuel = false;
+  uint64_t previous = 0;
+  for (int i = 0; i < 20; i++) {
+    applySession(s, 30 * MIN, Doctrine::Steady);
+    EXPECT_GE(s.last.variancePermille, -150);
+    EXPECT_LE(s.last.variancePermille, 150);
+    if (i > 0 && s.last.fuel != previous) sawDifferentFuel = true;
+    previous = s.last.fuel;
+  }
+  EXPECT_TRUE(sawDifferentFuel);
 }
