@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "DriftShipEngine.h"
+
 namespace DriftShip {
 
 const char* roleName(const Role role) {
@@ -149,6 +151,67 @@ void describeTraits(const CrewMember& crew, char* buf, const size_t len) {
   if (!buf || len == 0) return;
   buf[0] = '\0';
   for (const Trait trait : crew.traits) appendPart(buf, len, traitName(trait));
+}
+
+const char* specialtyName(const Specialty specialty) {
+  switch (specialty) {
+    case Specialty::Mining:
+      return tr(STR_DRIFT_SHIP_SPEC_MINING);
+    case Specialty::Science:
+      return tr(STR_DRIFT_SHIP_SPEC_SCIENCE);
+    case Specialty::Shipyard:
+      return tr(STR_DRIFT_SHIP_SPEC_SHIPYARD);
+    case Specialty::Count:
+      break;
+  }
+  return tr(STR_DRIFT_SHIP_SPEC_MINING);
+}
+
+void describeColonyTithe(const Colony& colony, char* buf, const size_t len) {
+  if (!buf || len == 0) return;
+  const unsigned fuelPct = colonyFuelPermille(colony) / 10u;
+  const auto goods = static_cast<unsigned>(colonyGoods(colony));
+  switch (colony.specialty) {
+    case Specialty::Science:
+      snprintf(buf, len, tr(STR_DRIFT_SHIP_TITHE_SCIENCE), fuelPct, goods);
+      return;
+    case Specialty::Shipyard:
+      snprintf(buf, len, tr(STR_DRIFT_SHIP_TITHE_SHIPYARD), fuelPct, goods);
+      return;
+    case Specialty::Mining:
+    case Specialty::Count:
+      break;
+  }
+  snprintf(buf, len, tr(STR_DRIFT_SHIP_TITHE_MINING), fuelPct, goods);
+}
+
+void describeColonyEvent(const ColonyEvent event, const uint16_t nameSeed, char* buf, const size_t len) {
+  if (!buf || len == 0) return;
+  buf[0] = '\0';
+  const char* fmt = nullptr;
+  switch (event) {
+    case ColonyEvent::Boom:
+      fmt = tr(STR_DRIFT_SHIP_EVENT_COLONY_BOOM);
+      break;
+    case ColonyEvent::Fever:
+      fmt = tr(STR_DRIFT_SHIP_EVENT_COLONY_FEVER);
+      break;
+    case ColonyEvent::Gift:
+      fmt = tr(STR_DRIFT_SHIP_EVENT_COLONY_GIFT);
+      break;
+    case ColonyEvent::HullSection:
+      fmt = tr(STR_DRIFT_SHIP_EVENT_COLONY_HULL);
+      break;
+    case ColonyEvent::TrainedCrew:
+      fmt = tr(STR_DRIFT_SHIP_EVENT_COLONY_CREW);
+      break;
+    case ColonyEvent::None:
+    case ColonyEvent::Count:
+      return;
+  }
+  char name[32];
+  colonyName(nameSeed, name, sizeof(name));
+  snprintf(buf, len, fmt, name);
 }
 
 }  // namespace DriftShip

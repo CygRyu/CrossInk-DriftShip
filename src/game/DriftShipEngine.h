@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "DriftShipColony.h"
 #include "DriftShipCrew.h"
 
 // Drift Ship: a zero-button idle game powered by reading time.
@@ -95,6 +96,15 @@ struct SessionReport {
   int16_t variancePermille = 0;  // this session's random Fuel swing, -150..+150
   // Save version 5+.
   uint8_t sittings = 1;  // reading sittings merged into this session
+  // Save version 6+: living colonies.
+  uint16_t colonyPermille = 0;  // +x/1000 Fuel from the colony network
+  uint32_t colonyParts = 0;     // Parts the colonies sent (included in parts)
+  uint32_t colonyData = 0;      // Data the colonies sent (included in data)
+  uint8_t colonyRepair = 0;     // hull condition the shipyards restored
+  ColonyEvent colonyEvent = ColonyEvent::None;
+  uint16_t colonyEventSeed = 0;  // name seed of the colony in colonyEvent
+  uint16_t foundedSeed = 0;      // name seed of the colony founded or joined, when reachCompleted
+  bool foundedJoined = false;    // the network was full: settlers joined an existing colony
 };
 
 struct State {
@@ -144,6 +154,11 @@ struct State {
   uint32_t sittingSeconds = 0;  // reading seconds in the chain so far
   uint8_t sittingCount = 0;     // sittings in the chain so far
   bool sittingScored = false;   // the chain was scored, so merging replays it from a snapshot
+  // Living colonies (save version 6+), newest last.
+  uint8_t colonyCount = 0;
+  Colony colony[MAX_COLONIES];
+  uint16_t sleepersAtReachStart = 0;  // sleepersWoken when the current reach began
+  uint32_t colonyEvents = 0;          // lifetime colony reports
   SessionReport last;
 };
 
@@ -215,6 +230,17 @@ int32_t moduleBonus(const State& state, ModuleEffect effect);
 
 // How the Steward rates a module: higher is better.
 int32_t moduleScore(const Module& module);
+
+// What a colony sends back each session. Bonuses scale with the number of
+// digits in its population, so a colony of 1.2M (7 digits) gives +7% Fuel.
+uint16_t colonyFuelPermille(const Colony& colony);
+// Parts (Mining), Data (Science) or hull repair (Shipyard) per session.
+uint32_t colonyGoods(const Colony& colony);
+// Growth per session in tenths of a percent for a session of minutes.
+uint32_t colonyGrowthPerMille(const Colony& colony, uint32_t minutes);
+
+// Population across every colony.
+uint64_t totalPopulation(const State& state);
 
 // Chance in percent that the next woken sleeper is Legendary.
 uint8_t legendaryChancePercent(const State& state);
@@ -296,9 +322,10 @@ void formatCompactNumber(uint64_t value, char* buf, size_t len);
 
 // --- Persistence (format is little-endian, field by field) ---
 
-constexpr uint8_t SAVE_VERSION = 5;  // v2 records, v3 crew and modules, v4 Fuel variance, v5 merging; older saves load
-// Big enough for a full crew roster. Callers keep it off the stack.
-constexpr size_t SAVE_BUFFER_SIZE = 512;
+// v2 records, v3 crew and modules, v4 Fuel variance, v5 merging, v6 colonies; older saves load.
+constexpr uint8_t SAVE_VERSION = 6;
+// Big enough for a full crew roster and colony network. Callers keep it off the stack.
+constexpr size_t SAVE_BUFFER_SIZE = 1024;
 
 // Writes the state into buf. Returns bytes written, or 0 if buf is too small.
 size_t serialize(const State& state, uint8_t* buf, size_t len);

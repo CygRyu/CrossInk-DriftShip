@@ -16,7 +16,7 @@
 
 namespace {
 
-constexpr int PAGE_COUNT = 6;
+constexpr int PAGE_COUNT = 7;
 constexpr int SIDE_MARGIN = 20;
 
 const char* systemName(const DriftShip::System system) {
@@ -99,9 +99,23 @@ void DriftShipActivity::turnPage(const int delta) {
       return;
     }
   }
+  // The colony network spans several screens the same way.
+  if (page == Page::Colonies) {
+    if (delta > 0 && colonyShown > 0 && colonyStart + colonyShown < state.colonyCount) {
+      colonyStart = static_cast<uint8_t>(colonyStart + colonyShown);
+      requestUpdate();
+      return;
+    }
+    if (delta < 0 && colonyStart > 0) {
+      colonyStart = 0;
+      requestUpdate();
+      return;
+    }
+  }
   const int next = (static_cast<int>(page) + delta + PAGE_COUNT) % PAGE_COUNT;
   page = static_cast<Page>(next);
   crewStart = 0;
+  colonyStart = 0;
   requestUpdate();
 }
 
@@ -157,6 +171,9 @@ void DriftShipActivity::render(RenderLock&&) {
         break;
       case Page::Modules:
         drawModulesPage(drawPageHeader(tr(STR_DRIFT_SHIP_PAGE_MODULES)), contentBottom);
+        break;
+      case Page::Colonies:
+        drawColoniesPage(drawPageHeader(tr(STR_DRIFT_SHIP_PAGE_COLONIES)), contentBottom);
         break;
       case Page::Log:
         drawLogPage(drawPageHeader(tr(STR_DRIFT_SHIP_PAGE_LOG)), contentBottom);
@@ -311,6 +328,10 @@ void DriftShipActivity::drawRecordsPage(const int top, const int bottom) const {
   row(tr(STR_DRIFT_SHIP_LIGHT_YEARS));
   DriftShip::formatCompactNumber(state.colonies, value, sizeof(value));
   row(tr(STR_DRIFT_SHIP_REC_COLONIES));
+  DriftShip::formatCompactNumber(DriftShip::totalPopulation(state), value, sizeof(value));
+  row(tr(STR_DRIFT_SHIP_REC_POPULATION));
+  DriftShip::formatCompactNumber(state.colonyEvents, value, sizeof(value));
+  row(tr(STR_DRIFT_SHIP_REC_COLONY_EVENTS));
   DriftShip::formatCompactNumber(state.sleepersWoken, value, sizeof(value));
   row(tr(STR_DRIFT_SHIP_REC_SLEEPERS));
   DriftShip::formatCompactNumber(state.derelictsFound, value, sizeof(value));
@@ -400,5 +421,47 @@ void DriftShipActivity::drawModulesPage(int y, const int bottom) const {
     y += titleLine;
     DriftShip::describeModule(state.modules[i], effects, sizeof(effects));
     y = DriftShip::drawWrappedText(renderer, SMALL_FONT_ID, x, y, width, effects, bottom) + 10;
+  }
+}
+
+void DriftShipActivity::drawColoniesPage(int y, const int bottom) const {
+  const int x = SIDE_MARGIN;
+  const int width = renderer.getScreenWidth() - SIDE_MARGIN * 2;
+  colonyShown = 0;
+  if (state.colonyCount == 0) {
+    DriftShip::drawWrappedText(renderer, UI_10_FONT_ID, x, y, width, tr(STR_DRIFT_SHIP_COLONIES_EMPTY), bottom);
+    return;
+  }
+
+  const int titleLine = renderer.getLineHeight(UI_10_FONT_ID);
+  const int smallLine = renderer.getLineHeight(SMALL_FONT_ID);
+  // Keep one line free at the bottom for the "more colonies" note.
+  const int listBottom = bottom - smallLine;
+  char name[32];
+  char population[16];
+  char line[96];
+  // Newest first.
+  for (uint8_t k = colonyStart; k < state.colonyCount; k++) {
+    // A colony entry is three lines; start one only if it fits whole.
+    if (y + titleLine + smallLine * 2 > listBottom) break;
+    const DriftShip::Colony& c = state.colony[state.colonyCount - 1 - k];
+
+    DriftShip::colonyName(c.nameSeed, name, sizeof(name));
+    drawRow(renderer, x, y, width, name, DriftShip::specialtyName(c.specialty));
+    y += titleLine;
+
+    DriftShip::formatCompactNumber(c.population, population, sizeof(population));
+    snprintf(line, sizeof(line), tr(STR_DRIFT_SHIP_COLONY_STATS), population, static_cast<unsigned>(c.foundedReach),
+             static_cast<unsigned>(c.founders));
+    y = DriftShip::drawWrappedText(renderer, SMALL_FONT_ID, x, y, width, line, listBottom);
+    DriftShip::describeColonyTithe(c, line, sizeof(line));
+    y = DriftShip::drawWrappedText(renderer, SMALL_FONT_ID, x, y, width, line, listBottom) + 8;
+    colonyShown++;
+  }
+
+  const uint8_t remaining = static_cast<uint8_t>(state.colonyCount - colonyStart - colonyShown);
+  if (remaining > 0) {
+    snprintf(line, sizeof(line), tr(STR_DRIFT_SHIP_MORE_COLONIES), static_cast<unsigned>(remaining));
+    DriftShip::drawWrappedText(renderer, SMALL_FONT_ID, x, std::min(y, listBottom), width, line, bottom);
   }
 }

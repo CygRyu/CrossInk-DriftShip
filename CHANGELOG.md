@@ -13,6 +13,8 @@
 
 - Drift Ship sessions are less predictable: Fuel swings up to 15% either way ("luck of the draw" on the receipt), and hull repairs, expedition wear and jump wear vary a little each time.
 - Drift Ship counts reading sittings less than 5 minutes apart as one session, so a quick sleep or a book switch no longer splits a long read. The receipt shows how many sittings were merged. Merging uses the clock when it is set, and stops once the combined session would pass 90 minutes.
+- Drift Ship colonies come alive: each colony has a name, a specialty (Mining, Science or Shipyard) and a population that grows a little with every session you read, faster with the crew who retired there. Colonies add Fuel (more as they grow) and send Parts, Data or hull repairs after the ship, and now and then a report arrives on the sleep screen: a boom, a fever, supplies, a hull section or a trained crew member. Existing colonies are brought to life when you update.
+- New Colonies page in the Drift Ship screen, and total population and colony reports on the Records page.
 
 ### Fixed
 
