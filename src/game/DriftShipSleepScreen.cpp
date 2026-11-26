@@ -249,6 +249,7 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
   snprintf(line, sizeof(line), "%s %s", number, tr(STR_DRIFT_SHIP_BASE));
   appendMultiplier(line, sizeof(line), rep.reactorPermille, tr(STR_DRIFT_SHIP_REACTOR));
   appendMultiplier(line, sizeof(line), rep.crewPermille, tr(STR_DRIFT_SHIP_CREW_BONUS));
+  appendMultiplier(line, sizeof(line), rep.colonyPermille, tr(STR_DRIFT_SHIP_COLONY_BONUS));
   appendMultiplier(line, sizeof(line), rep.starPermille, tr(STR_DRIFT_SHIP_GAS_GIANT_BONUS));
   appendMultiplier(line, sizeof(line), rep.modulePermille, tr(STR_DRIFT_SHIP_MODULES_BONUS));
   appendMultiplier(line, sizeof(line), rep.variancePermille, tr(STR_DRIFT_SHIP_VARIANCE));
@@ -277,6 +278,11 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
   if (rep.derelict) append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_DERELICT));
   if (rep.twist == Twist::Good) append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_GOOD));
   if (rep.twist == Twist::Bad) append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_BAD));
+  if (rep.colonyEvent != ColonyEvent::None) {
+    char sentence[80];
+    describeColonyEvent(rep.colonyEvent, rep.colonyEventSeed, sentence, sizeof(sentence));
+    append(events, sizeof(events), " ", sentence);
+  }
   if (rep.crewEvent != CrewEvent::None) {
     char name[32];
     char sentence[128];
@@ -316,7 +322,15 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
     append(events, sizeof(events), " ",
            rep.cleanJump ? tr(STR_DRIFT_SHIP_EVENT_CLEAN_JUMP) : tr(STR_DRIFT_SHIP_EVENT_JUMPED));
   }
-  if (rep.reachCompleted) append(events, sizeof(events), " ", tr(STR_DRIFT_SHIP_EVENT_COLONY));
+  if (rep.reachCompleted) {
+    char name[32];
+    char sentence[80];
+    colonyName(rep.foundedSeed, name, sizeof(name));
+    snprintf(sentence, sizeof(sentence),
+             rep.foundedJoined ? tr(STR_DRIFT_SHIP_EVENT_COLONY_JOINED) : tr(STR_DRIFT_SHIP_EVENT_COLONY_FOUNDED),
+             name);
+    append(events, sizeof(events), " ", sentence);
+  }
   if (rep.retired > 0) {
     char sentence[48];
     snprintf(sentence, sizeof(sentence), tr(STR_DRIFT_SHIP_EVENT_RETIRED), static_cast<unsigned>(rep.retired));

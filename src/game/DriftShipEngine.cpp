@@ -251,11 +251,9 @@ CrewMember rollCrew(State& s) {
   return c;
 }
 
-// A sleeper wakes: they take an empty bunk, replace the weakest crew member if
-// stronger, or go back to cryo.
-CrewEvent wakeSleeper(State& s, CrewMember& woken) {
-  if (s.sleepersWoken < UINT16_MAX) s.sleepersWoken++;
-  woken = rollCrew(s);
+// A new crew member takes an empty bunk, replaces the weakest crew member if
+// stronger, or goes back to cryo.
+CrewEvent placeCrew(State& s, const CrewMember& woken) {
   if (s.crewCount < crewCapacity(s)) {
     s.crew[s.crewCount++] = woken;
     return CrewEvent::Joined;
@@ -269,6 +267,13 @@ CrewEvent wakeSleeper(State& s, CrewMember& woken) {
     return CrewEvent::Replaced;
   }
   return CrewEvent::Cryo;
+}
+
+// A sleeper wakes and is rolled.
+CrewEvent wakeSleeper(State& s, CrewMember& woken) {
+  if (s.sleepersWoken < UINT16_MAX) s.sleepersWoken++;
+  woken = rollCrew(s);
+  return placeCrew(s, woken);
 }
 
 // A bad twist may injure one crew member. Grit resists it.
@@ -311,20 +316,110 @@ void trainCrew(State& s, const uint32_t seconds, SessionReport& r) {
 }
 
 // Crew who have served for CREW_RETIRE_AFTER_REACHES reaches settle in the
-// colony just founded and leave a permanent Fuel bonus behind.
-void retireCrew(State& s, SessionReport& r) {
+// colony just founded and leave a permanent Fuel bonus behind. Returns how
+// many retired; their main stats are added to founderStats.
+uint8_t retireCrew(State& s, SessionReport& r, uint16_t& founderStats) {
   uint8_t kept = 0;
+  uint8_t retired = 0;
   for (uint8_t i = 0; i < s.crewCount; i++) {
     const CrewMember& c = s.crew[i];
     if (s.reach >= c.joinedReach + CREW_RETIRE_AFTER_REACHES) {
       s.legacyPermille = static_cast<uint16_t>(std::min<uint32_t>(30000, s.legacyPermille + 5u * mainStat(c)));
       s.crewRetired = satAdd32(s.crewRetired, 1);
       if (r.retired < UINT8_MAX) r.retired++;
+      retired++;
+      founderStats = static_cast<uint16_t>(std::min<uint32_t>(UINT16_MAX, founderStats + mainStat(c)));
     } else {
       s.crew[kept++] = c;
     }
   }
   s.crewCount = kept;
+  return retired;
+}
+
+// --- Living colonies ---
+
+uint8_t populationDigits(uint64_t population) {
+  uint8_t digits = 1;
+  while (population >= 10) {
+    population /= 10;
+    digits++;
+  }
+  return digits;
+}
+
+// Founds the colony for the reach just completed, with the crew who retired
+// there. Its starting population is the sleepers the ship woke on the reach.
+void foundColony(State& s, SessionReport& r, const uint8_t founders, const uint16_t founderStats) {
+  const uint16_t wokenThisReach =
+      s.sleepersWoken > s.sleepersAtReachStart ? static_cast<uint16_t>(s.sleepersWoken - s.sleepersAtReachStart) : 0;
+  s.sleepersAtReachStart = s.sleepersWoken;
+  const uint64_t settlers = 1000ULL * (1 + wokenThisReach) + 500ULL * founders;
+
+  if (s.colonyCount < MAX_COLONIES) {
+    Colony& c = s.colony[s.colonyCount++];
+    c = Colony{};
+    c.nameSeed = static_cast<uint16_t>(nextRandom(s) & 0xFF);
+    c.specialty = static_cast<Specialty>(nextRandom(s) % static_cast<uint8_t>(Specialty::Count));
+    c.founders = founders;
+    c.founderStats = founderStats;
+    c.foundedReach = s.reach;
+    c.population = settlers;
+    r.foundedSeed = c.nameSeed;
+    r.foundedJoined = false;
+    return;
+  }
+  // The network is full: the settlers join the smallest colony.
+  uint8_t smallest = 0;
+  for (uint8_t i = 1; i < s.colonyCount; i++) {
+    if (s.colony[i].population < s.colony[smallest].population) smallest = i;
+  }
+  Colony& c = s.colony[smallest];
+  c.population = std::min(MAX_POPULATION, satAdd(c.population, settlers));
+  c.founders = static_cast<uint8_t>(std::min<uint32_t>(UINT8_MAX, c.founders + founders));
+  c.founderStats = static_cast<uint16_t>(std::min<uint32_t>(UINT16_MAX, c.founderStats + founderStats));
+  r.foundedSeed = c.nameSeed;
+  r.foundedJoined = true;
+}
+
+// Every colony grows by compound interest on the minutes read.
+void growColonies(State& s, const uint32_t minutes) {
+  for (uint8_t i = 0; i < s.colonyCount; i++) {
+    Colony& c = s.colony[i];
+    const uint64_t growth = std::max<uint64_t>(1, scaleRatio(c.population, colonyGrowthPerMille(c, minutes), 1000));
+    c.population = std::min(MAX_POPULATION, satAdd(c.population, growth));
+  }
+}
+
+// Now and then one colony sends a report: a boom, a fever or a gift.
+void rollColonyEvent(State& s, SessionReport& r, uint32_t& parts, uint32_t& data) {
+  if (s.colonyCount == 0 || !rollChance(s, 12)) return;
+  Colony& c = s.colony[nextRandom(s) % s.colonyCount];
+  const uint8_t digits = populationDigits(c.population);
+  const uint8_t roll = rollPercent(s);
+  ColonyEvent event;
+  if (roll < 35) {
+    event = ColonyEvent::Boom;
+    c.population = std::min(MAX_POPULATION, satAdd(c.population, c.population / 10));
+  } else if (roll < 65) {
+    event = ColonyEvent::Gift;
+    parts += 5u * digits;
+    data += 3u * digits;
+    r.colonyParts += 5u * digits;
+    r.colonyData += 3u * digits;
+  } else if (roll < 80) {
+    event = ColonyEvent::Fever;
+    c.population = std::max<uint64_t>(1, c.population - c.population / 10);
+  } else if (roll < 92 || r.sleeperWoken) {
+    // A trained crew member only comes on a session that didn't wake one.
+    event = ColonyEvent::HullSection;
+    s.condition = static_cast<uint8_t>(std::min<uint32_t>(100, s.condition + 15u));
+  } else {
+    event = ColonyEvent::TrainedCrew;
+  }
+  r.colonyEvent = event;
+  r.colonyEventSeed = c.nameSeed;
+  s.colonyEvents = satAdd32(s.colonyEvents, 1);
 }
 
 // --- Salvaged modules ---
@@ -479,6 +574,38 @@ int32_t moduleScore(const Module& m) {
   return score;
 }
 
+uint16_t colonyFuelPermille(const Colony& c) {
+  const uint32_t digits = populationDigits(c.population);
+  return static_cast<uint16_t>((c.specialty == Specialty::Shipyard ? 20u : 10u) * digits);
+}
+
+uint32_t colonyGoods(const Colony& c) {
+  const uint32_t digits = populationDigits(c.population);
+  switch (c.specialty) {
+    case Specialty::Mining:
+      return digits;
+    case Specialty::Science:
+      return (digits + 1) / 2;
+    case Specialty::Shipyard:
+      return digits / 2;
+    case Specialty::Count:
+      break;
+  }
+  return 0;
+}
+
+uint32_t colonyGrowthPerMille(const Colony& c, const uint32_t minutes) {
+  // 1% per 30 minutes read, up to twice as fast with strong founders.
+  const uint32_t founderBonus = std::min<uint32_t>(100, 5u * c.founderStats);
+  return std::min(SESSION_CAP_SECONDS / 60, minutes) * (100 + founderBonus) / 300;
+}
+
+uint64_t totalPopulation(const State& s) {
+  uint64_t total = 0;
+  for (uint8_t i = 0; i < s.colonyCount; i++) total = satAdd(total, s.colony[i].population);
+  return total;
+}
+
 uint8_t legendaryChancePercent(const State& s) {
   // 1% until 75 wakes without a Legendary, then +2% per wake: guaranteed by the 150th.
   if (s.wakesSinceLegendary < 75) return 1;
@@ -536,12 +663,16 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
   r.baseFuel = baseFuelForSeconds(t);
   r.reactorPermille = static_cast<uint16_t>(80u * level(s, System::Reactor));
   r.crewPermille = static_cast<uint16_t>(crewFuelPermille(s, t));
+  uint32_t colonyPermille = 0;
+  for (uint8_t i = 0; i < s.colonyCount; i++) colonyPermille += colonyFuelPermille(s.colony[i]);
+  r.colonyPermille = static_cast<uint16_t>(std::min<uint32_t>(5000, colonyPermille));
   r.starPermille = (star == StarType::GasGiant && t >= EXPEDITION_SECONDS) ? 300 : 0;
   r.modulePermille =
       static_cast<int16_t>(std::max<int32_t>(-500, std::min<int32_t>(5000, 10 * moduleBonus(s, ModuleEffect::Fuel))));
   r.lucky = rollChance(s, 5u + bestLuckOnDuty(s) / 2);
   uint64_t fuel = addPermille(r.baseFuel, r.reactorPermille);
   fuel = addPermille(fuel, r.crewPermille);
+  fuel = addPermille(fuel, r.colonyPermille);
   fuel = addPermille(fuel, r.starPermille);
   if (r.modulePermille >= 0) {
     fuel = addPermille(fuel, static_cast<uint32_t>(r.modulePermille));
@@ -645,6 +776,33 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
     r.crewEvent = wakeSleeper(s, r.newCrew);
   }
 
+  // --- Colonies: growth, shipments and the odd report ---
+  growColonies(s, t / 60);
+  for (uint8_t i = 0; i < s.colonyCount; i++) {
+    const Colony& c = s.colony[i];
+    const uint32_t goods = colonyGoods(c);
+    if (c.specialty == Specialty::Mining) {
+      parts += goods;
+      r.colonyParts += goods;
+    } else if (c.specialty == Specialty::Science) {
+      data += goods;
+      r.colonyData += goods;
+    } else {
+      r.colonyRepair = static_cast<uint8_t>(std::min<uint32_t>(100, r.colonyRepair + goods));
+    }
+  }
+  s.condition = static_cast<uint8_t>(std::min<uint32_t>(100, s.condition + r.colonyRepair));
+  rollColonyEvent(s, r, parts, data);
+  if (r.colonyEvent == ColonyEvent::TrainedCrew) {
+    // Raised in the colony: never Common, and already a few levels in.
+    CrewMember trained = rollCrew(s);
+    if (trained.rarity == Rarity::Common) trained.rarity = Rarity::Skilled;
+    trained.level = 3;
+    trained.skill = static_cast<uint8_t>(std::min<uint32_t>(MAX_STAT, trained.skill + 2u));
+    r.newCrew = trained;
+    r.crewEvent = placeCrew(s, trained);
+  }
+
   s.parts = satAdd(s.parts, parts);
   s.data = satAdd(s.data, data);
 
@@ -678,7 +836,9 @@ bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrin
       if (s.reach < UINT16_MAX) s.reach++;
       if (s.colonies < UINT16_MAX) s.colonies++;
       r.reachCompleted = true;
-      retireCrew(s, r);
+      uint16_t founderStats = 0;
+      const uint8_t founders = retireCrew(s, r, founderStats);
+      foundColony(s, r, founders, founderStats);
     }
     const StarType next = rollStarType(s);
     s.starType = static_cast<uint8_t>(next);
@@ -995,6 +1155,28 @@ void writeModule(Writer& w, const Module& m) {
   }
 }
 
+void writeColony(Writer& w, const Colony& c) {
+  w.u16(c.nameSeed);
+  w.u8(static_cast<uint8_t>(c.specialty));
+  w.u8(c.founders);
+  w.u16(c.founderStats);
+  w.u16(c.foundedReach);
+  w.u64(c.population);
+}
+
+Colony readColony(Reader& rd) {
+  Colony c;
+  c.nameSeed = rd.u16();
+  const uint8_t specialty = rd.u8();
+  c.specialty =
+      specialty < static_cast<uint8_t>(Specialty::Count) ? static_cast<Specialty>(specialty) : Specialty::Mining;
+  c.founders = rd.u8();
+  c.founderStats = rd.u16();
+  c.foundedReach = rd.u16();
+  c.population = std::min(MAX_POPULATION, std::max<uint64_t>(1, rd.u64()));
+  return c;
+}
+
 Module readModule(Reader& rd) {
   Module m;
   for (uint8_t k = 0; k < 2; k++) {
@@ -1101,6 +1283,21 @@ size_t serialize(const State& s, uint8_t* buf, const size_t len) {
   w.u8(s.sittingScored ? 1 : 0);
   w.u8(r.sittings);
 
+  // Version 6: living colonies.
+  const uint8_t colonyCount = std::min(s.colonyCount, MAX_COLONIES);
+  w.u8(colonyCount);
+  for (uint8_t i = 0; i < colonyCount; i++) writeColony(w, s.colony[i]);
+  w.u16(s.sleepersAtReachStart);
+  w.u32(s.colonyEvents);
+  w.u16(r.colonyPermille);
+  w.u32(r.colonyParts);
+  w.u32(r.colonyData);
+  w.u8(r.colonyRepair);
+  w.u8(static_cast<uint8_t>(r.colonyEvent));
+  w.u16(r.colonyEventSeed);
+  w.u16(r.foundedSeed);
+  w.u8(r.foundedJoined ? 1 : 0);
+
   if (!w.ok) return 0;
   w.u32(fnv1a(buf, w.pos));
   return w.ok ? w.pos : 0;
@@ -1202,6 +1399,22 @@ bool deserialize(State& out, const uint8_t* buf, const size_t len) {
     s.sittingScored = rd.u8() != 0;
     r.sittings = std::max<uint8_t>(1, rd.u8());
   }
+  if (version >= 6) {
+    s.colonyCount = std::min(rd.u8(), MAX_COLONIES);
+    for (uint8_t i = 0; i < s.colonyCount; i++) s.colony[i] = readColony(rd);
+    s.sleepersAtReachStart = rd.u16();
+    s.colonyEvents = rd.u32();
+    r.colonyPermille = rd.u16();
+    r.colonyParts = rd.u32();
+    r.colonyData = rd.u32();
+    r.colonyRepair = rd.u8();
+    const uint8_t colonyEvent = rd.u8();
+    r.colonyEvent = colonyEvent < static_cast<uint8_t>(ColonyEvent::Count) ? static_cast<ColonyEvent>(colonyEvent)
+                                                                           : ColonyEvent::None;
+    r.colonyEventSeed = rd.u16();
+    r.foundedSeed = rd.u16();
+    r.foundedJoined = rd.u8() != 0;
+  }
 
   const size_t payloadLen = rd.pos;
   const uint32_t checksum = rd.u32();
@@ -1221,6 +1434,19 @@ bool deserialize(State& out, const uint8_t* buf, const size_t len) {
     // ship a crew to match, up to the cryo bay's capacity.
     const uint16_t toWake = std::min<uint16_t>(s.sleepersWoken, crewCapacity(s));
     for (uint16_t i = 0; i < toWake; i++) s.crew[s.crewCount++] = rollCrew(s);
+  }
+  if (version < 6) {
+    // Before colonies were alive they were only a count. Found one for each
+    // past reach (the newest MAX_COLONIES), with a modest population.
+    const uint16_t first = s.colonies > MAX_COLONIES ? static_cast<uint16_t>(s.colonies - MAX_COLONIES) : 0;
+    for (uint16_t reach = first; reach < s.colonies; reach++) {
+      Colony& c = s.colony[s.colonyCount++];
+      c.nameSeed = static_cast<uint16_t>(nextRandom(s) & 0xFF);
+      c.specialty = static_cast<Specialty>(nextRandom(s) % static_cast<uint8_t>(Specialty::Count));
+      c.foundedReach = static_cast<uint16_t>(reach + 1);
+      c.population = 2000;
+    }
+    s.sleepersAtReachStart = s.sleepersWoken;
   }
   s.version = SAVE_VERSION;
   out = s;

@@ -185,16 +185,19 @@ uint32_t testFnv1a(const uint8_t* data, const size_t n) {
 }
 }  // namespace
 
-// Rebuilds an older save layout from a current one: drops the version 5 block,
+// Rebuilds an older save layout from a current one: drops the version 6 block,
+// then the version 5 block,
 // then the version 4 block, then the version 3 crew block, then for version 1 the records block, and
 // re-signs the result.
 size_t makeLegacySave(const State& state, const uint8_t version, uint8_t* out) {
   uint8_t cur[SAVE_BUFFER_SIZE];
   const size_t len = serialize(state, cur, sizeof(cur));
+  const size_t v6Block = 1 + 16u * state.colonyCount + 23;
   constexpr size_t v5Block = 15;
   constexpr size_t v4Block = 2;
   const size_t v3Block = 18 + 1 + 16u * state.crewCount + 1 + 4u * state.moduleCount + 29;
-  size_t payload = len - 4 - v5Block;
+  size_t payload = len - 4 - v6Block;
+  if (version <= 4) payload -= v5Block;
   if (version <= 3) payload -= v4Block;
   if (version <= 2) payload -= v3Block;
   memcpy(out, cur, payload);
@@ -540,4 +543,152 @@ TEST(DriftShipMerge, SittingStateRoundTrips) {
   EXPECT_EQ(loaded.sittingCount, 2);
   EXPECT_TRUE(loaded.sittingScored);
   EXPECT_EQ(loaded.last.sittings, 2);
+}
+
+// --- Living colonies ---
+
+namespace {
+// Plays until the ship completes a reach (or gives up).
+State playToReach(const uint16_t reach, const uint32_t minutes = 60) {
+  State s;
+  for (int i = 0; i < 20000 && s.reach < reach; i++) applySession(s, minutes * MIN, Doctrine::Steady);
+  return s;
+}
+}  // namespace
+
+TEST(DriftShipColonies, EveryReachFoundsAColony) {
+  const State s = playToReach(2);
+  ASSERT_EQ(s.reach, 2u);
+  EXPECT_EQ(s.colonyCount, 2u);
+  EXPECT_EQ(s.colonies, 2u);
+  EXPECT_EQ(s.colony[0].foundedReach, 1u);
+  EXPECT_EQ(s.colony[1].foundedReach, 2u);
+  EXPECT_GE(s.colony[1].population, 1000u);
+  char name[32];
+  colonyName(s.colony[0].nameSeed, name, sizeof(name));
+  EXPECT_GT(strlen(name), 3u);
+}
+
+TEST(DriftShipColonies, ColoniesGrowByCompoundInterest) {
+  State s = playToReach(1);
+  ASSERT_EQ(s.colonyCount, 1u);
+  s.colony[0].founderStats = 0;
+  s.colony[0].population = 100000;
+  // About 1% per 30-minute session.
+  applySession(s, 30 * MIN, Doctrine::Steady);
+  const uint64_t after = s.colony[0].population;
+  if (s.last.colonyEvent == ColonyEvent::None) {
+    EXPECT_EQ(after, 101000u);
+  }
+  // A year of daily 30-minute reads compounds well past linear growth.
+  s.colony[0].population = 2000;
+  for (int i = 0; i < 365; i++) applySession(s, 30 * MIN, Doctrine::Steady);
+  EXPECT_GT(s.colony[0].population, 2000u * 20);
+  EXPECT_LE(s.colony[0].population, MAX_POPULATION);
+}
+
+TEST(DriftShipColonies, StrongFoundersGrowFaster) {
+  Colony plain;
+  plain.population = 10000;
+  Colony founded = plain;
+  founded.founderStats = 30;
+  EXPECT_EQ(colonyGrowthPerMille(plain, 30), 10u);
+  EXPECT_EQ(colonyGrowthPerMille(founded, 30), 20u);
+  EXPECT_EQ(colonyGrowthPerMille(plain, 500), colonyGrowthPerMille(plain, 90));  // capped like the session
+}
+
+TEST(DriftShipColonies, ColoniesSendFuelAndGoods) {
+  Colony c;
+  c.population = 1240000;  // 7 digits
+  c.specialty = Specialty::Mining;
+  EXPECT_EQ(colonyFuelPermille(c), 70u);
+  EXPECT_EQ(colonyGoods(c), 7u);
+  c.specialty = Specialty::Science;
+  EXPECT_EQ(colonyGoods(c), 4u);
+  c.specialty = Specialty::Shipyard;
+  EXPECT_EQ(colonyFuelPermille(c), 140u);
+  EXPECT_EQ(colonyGoods(c), 3u);
+
+  State s = playToReach(1);
+  applySession(s, 45 * MIN, Doctrine::Steady);
+  EXPECT_EQ(s.last.colonyPermille, colonyFuelPermille(s.colony[0]));
+}
+
+TEST(DriftShipColonies, ColonyReportsComeInEveryKind) {
+  State s = playToReach(1);
+  bool seen[static_cast<uint8_t>(ColonyEvent::Count)] = {};
+  uint32_t reports = 0;
+  for (int i = 0; i < 2000; i++) {
+    applySession(s, 20 * MIN, Doctrine::Steady);
+    seen[static_cast<uint8_t>(s.last.colonyEvent)] = true;
+    if (s.last.colonyEvent != ColonyEvent::None) reports++;
+  }
+  for (uint8_t e = 1; e < static_cast<uint8_t>(ColonyEvent::Count); e++) EXPECT_TRUE(seen[e]) << int(e);
+  // About 12% of sessions.
+  EXPECT_GT(reports, 160u);
+  EXPECT_LT(reports, 320u);
+  EXPECT_EQ(s.colonyEvents >= reports, true);
+}
+
+TEST(DriftShipColonies, AFullNetworkFoldsNewSettlersIn) {
+  State s = playToReach(1);
+  s.colonyCount = MAX_COLONIES;
+  for (uint8_t i = 0; i < MAX_COLONIES; i++) {
+    s.colony[i].population = 50000u + i;
+    s.colony[i].nameSeed = i;
+  }
+  s.colony[5].population = 10;
+  // Force the end of the reach on the next session.
+  s.star = STARS_PER_REACH - 1;
+  s.surveysHere = SURVEYS_TO_PLOT_COURSE;
+  s.condition = 100;
+  s.jumpCharge = jumpChargeNeeded(s) * 4;
+  applySession(s, 20 * MIN, Doctrine::Steady);
+  ASSERT_TRUE(s.last.reachCompleted);
+  EXPECT_EQ(s.colonyCount, MAX_COLONIES);
+  EXPECT_TRUE(s.last.foundedJoined);
+  EXPECT_EQ(s.last.foundedSeed, 5u);
+  EXPECT_GE(s.colony[5].population, 1000u);
+}
+
+TEST(DriftShipColonies, ColoniesRoundTrip) {
+  const State a = playToReach(2);
+  uint8_t buf[SAVE_BUFFER_SIZE];
+  const size_t len = serialize(a, buf, sizeof(buf));
+  ASSERT_GT(len, 0u);
+  State b;
+  ASSERT_TRUE(deserialize(b, buf, len));
+  ASSERT_EQ(b.colonyCount, a.colonyCount);
+  for (uint8_t i = 0; i < a.colonyCount; i++) {
+    EXPECT_EQ(b.colony[i].nameSeed, a.colony[i].nameSeed);
+    EXPECT_EQ(b.colony[i].specialty, a.colony[i].specialty);
+    EXPECT_EQ(b.colony[i].population, a.colony[i].population);
+    EXPECT_EQ(b.colony[i].founderStats, a.colony[i].founderStats);
+  }
+  EXPECT_EQ(b.sleepersAtReachStart, a.sleepersAtReachStart);
+  EXPECT_EQ(b.last.colonyPermille, a.last.colonyPermille);
+}
+
+TEST(DriftShipColonies, FullNetworkFitsTheSaveBuffer) {
+  State s = play(30, 5);
+  s.crewCount = MAX_CREW;
+  s.moduleCount = MODULE_SLOTS;
+  s.colonyCount = MAX_COLONIES;
+  uint8_t buf[SAVE_BUFFER_SIZE];
+  EXPECT_GT(serialize(s, buf, sizeof(buf)), 0u);
+}
+
+TEST(DriftShipColonies, VersionFiveSavesGetLivingColonies) {
+  State a = playToReach(2);
+  // A v5 save only knew the colony count.
+  a.colonyCount = 0;
+  uint8_t v5[SAVE_BUFFER_SIZE];
+  const size_t len = makeLegacySave(a, 5, v5);
+  State b;
+  ASSERT_TRUE(deserialize(b, v5, len));
+  EXPECT_EQ(b.version, SAVE_VERSION);
+  EXPECT_EQ(b.colonyCount, 2u);
+  EXPECT_EQ(b.colony[1].foundedReach, 2u);
+  EXPECT_EQ(b.colony[0].population, 2000u);
+  EXPECT_EQ(b.sleepersAtReachStart, b.sleepersWoken);
 }
