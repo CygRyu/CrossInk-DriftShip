@@ -960,6 +960,7 @@ STR_DRIFT_SHIP_RESET_CONFIRM: "Erase the ship and all game progress? This can't 
 STR_DRIFT_SHIP_NOT_STARTED: "Read for at least 2 minutes to wake the ship."
 STR_DRIFT_SHIP_LOCATION: "Reach %u - Star %u of %u"
 STR_DRIFT_SHIP_SESSION: "Session %lu - %lu min"
+STR_DRIFT_SHIP_SESSION_SITTINGS: "Session %lu - %lu min in %u sittings"
 STR_DRIFT_SHIP_WATCH_MAINTENANCE: "Maintenance"
 STR_DRIFT_SHIP_WATCH_SURVEY: "Survey"
 STR_DRIFT_SHIP_WATCH_EXPEDITION: "Expedition"

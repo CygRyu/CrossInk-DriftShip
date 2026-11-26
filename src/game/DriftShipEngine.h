@@ -43,6 +43,10 @@ constexpr uint32_t EXPEDITION_SECONDS = 30 * 60;
 constexpr uint32_t LONG_WATCH_SECONDS = 60 * 60;
 constexpr uint32_t BONUS_RAMP_SECONDS = 60 * 60;
 constexpr uint32_t SESSION_CAP_SECONDS = 90 * 60;
+// Sittings less than this far apart are scored as one session.
+constexpr uint32_t MERGE_GAP_SECONDS = 5 * 60;
+// Shorter sittings are too brief to keep a merge chain open.
+constexpr uint32_t MIN_SITTING_SECONDS = 30;
 
 // What happened to a newly woken sleeper.
 enum class CrewEvent : uint8_t {
@@ -89,6 +93,8 @@ struct SessionReport {
   uint8_t retired = 0;
   // Save version 4+.
   int16_t variancePermille = 0;  // this session's random Fuel swing, -150..+150
+  // Save version 5+.
+  uint8_t sittings = 1;  // reading sittings merged into this session
 };
 
 struct State {
@@ -131,6 +137,13 @@ struct State {
   uint32_t legendaryWoken = 0;
   uint32_t modulesFound = 0;
   uint32_t crewRetired = 0;
+  // Session merging (save version 5+): the open chain of sittings that the
+  // next sitting may continue. sittingClock 0 means no chain is open.
+  uint32_t sittingEnd = 0;      // clock seconds when the latest sitting ended
+  uint32_t sittingClock = 0;    // which clock measured sittingEnd
+  uint32_t sittingSeconds = 0;  // reading seconds in the chain so far
+  uint8_t sittingCount = 0;     // sittings in the chain so far
+  bool sittingScored = false;   // the chain was scored, so merging replays it from a snapshot
   SessionReport last;
 };
 
@@ -167,6 +180,10 @@ LogEntry makeLogEntry(const State& state);
 
 // Appends to the log, dropping the oldest entry when full.
 void pushLogEntry(SessionLog& log, const LogEntry& entry);
+
+// Like pushLogEntry, but replaces the newest entry when it has the same
+// session number (a merged session was re-scored).
+void upsertLogEntry(SessionLog& log, const LogEntry& entry);
 
 constexpr size_t LOG_ENTRY_SIZE = 20;
 void serializeLogEntry(const LogEntry& entry, uint8_t (&buf)[LOG_ENTRY_SIZE]);
@@ -216,6 +233,60 @@ bool canJump(const State& state);
 // state untouched) for sessions shorter than MIN_SESSION_SECONDS.
 bool applySession(State& state, uint32_t activeSeconds, Doctrine doctrine);
 
+// --- Session merging ---
+//
+// A sitting is one stretch of reading between opening a book and leaving it
+// or sleeping. Sittings less than MERGE_GAP_SECONDS apart are one session, so
+// a quick sleep or a book switch doesn't split a long read. The first sitting
+// has already been scored by the time the next one ends, so a merge replays
+// the whole chain from a snapshot taken before it: the result is exactly what
+// one long session would have earned.
+//
+// clockId names the clock that measured now (0 = no clock). Times from
+// different clocks are never compared.
+
+// True when a sitting of activeSeconds that ended at now continues the open
+// chain. The sitting started no later than now - activeSeconds, so the gap is
+// never under-estimated. Merges stop once the chain would pass the 90-minute
+// cap; inside the cap, merging never earns less Fuel than separate sessions.
+bool continuesSitting(const State& state, uint32_t activeSeconds, uint32_t now, uint32_t clockId);
+
+// Reading seconds the session will be scored with: the whole chain when the
+// sitting merges, otherwise the sitting alone.
+uint32_t sittingSessionSeconds(const State& previous, bool merged, uint32_t activeSeconds);
+
+// Records the sitting that just ended into target (the state that will be
+// saved), using previous (the state before this sitting) for the chain so far.
+// target and previous may be the same object. scored says whether target now
+// holds a scored session for this chain; its receipt then counts the sittings.
+void recordSitting(State& target, const State& previous, bool merged, uint32_t activeSeconds, uint32_t now,
+                   uint32_t clockId, bool scored);
+
+// Closes the chain so the next sitting starts a new session.
+void closeSitting(State& state);
+
+// True when the sitting merges into a chain that was already scored, so the
+// caller must load the snapshot into scratch before calling applySitting().
+bool sittingNeedsSnapshot(const State& state, uint32_t activeSeconds, uint32_t now, uint32_t clockId);
+
+struct SittingOutcome {
+  bool save = false;           // state changed and should be saved
+  bool scored = false;         // state.last is a new or re-scored session
+  bool writeSnapshot = false;  // scratch holds a new snapshot for the chain
+};
+
+// Applies one sitting. state is the saved game and receives the result.
+// scratch is working memory: on entry it holds the snapshot when
+// snapshotLoaded, and on return it holds the new snapshot when
+// writeSnapshot. Pass snapshotLoaded = false when the snapshot was needed
+// but could not be read; the sitting is then scored on its own.
+SittingOutcome applySitting(State& state, State& scratch, bool snapshotLoaded, uint32_t activeSeconds, uint32_t now,
+                            uint32_t clockId, Doctrine doctrine);
+
+// Starts the voyage of a never-played ship. applySession() calls it on the
+// first counted session; seed is that session's seconds.
+void startVoyage(State& state, uint32_t seed);
+
 // Starts a fresh voyage. Used for first play and for the hard reset.
 void resetState(State& state);
 
@@ -225,7 +296,7 @@ void formatCompactNumber(uint64_t value, char* buf, size_t len);
 
 // --- Persistence (format is little-endian, field by field) ---
 
-constexpr uint8_t SAVE_VERSION = 4;  // v2 records, v3 crew and modules, v4 Fuel variance; older saves load
+constexpr uint8_t SAVE_VERSION = 5;  // v2 records, v3 crew and modules, v4 Fuel variance, v5 merging; older saves load
 // Big enough for a full crew roster. Callers keep it off the stack.
 constexpr size_t SAVE_BUFFER_SIZE = 512;
 

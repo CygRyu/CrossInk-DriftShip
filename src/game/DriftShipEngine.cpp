@@ -508,14 +508,16 @@ void resetState(State& s) {
   s.version = SAVE_VERSION;
 }
 
+void startVoyage(State& s, const uint32_t seed) {
+  resetState(s);
+  s.rng = 0x9E3779B9u ^ seed;
+  s.starType = static_cast<uint8_t>(rollStarType(s));
+}
+
 bool applySession(State& s, const uint32_t activeSeconds, const Doctrine doctrine) {
   if (activeSeconds < MIN_SESSION_SECONDS) return false;
 
-  if (s.version == 0) {
-    resetState(s);
-    s.rng = 0x9E3779B9u ^ activeSeconds;
-    s.starType = static_cast<uint8_t>(rollStarType(s));
-  }
+  if (s.version == 0) startVoyage(s, activeSeconds);
 
   SessionReport r;
   const uint32_t t = std::min(activeSeconds, SESSION_CAP_SECONDS);
@@ -719,12 +721,92 @@ LogEntry makeLogEntry(const State& s) {
   return e;
 }
 
+bool continuesSitting(const State& s, const uint32_t activeSeconds, const uint32_t now, const uint32_t clockId) {
+  if (clockId == 0 || s.sittingClock != clockId || s.sittingCount == 0) return false;
+  if (now < s.sittingEnd) return false;  // the clock went backwards
+  if (activeSeconds > SESSION_CAP_SECONDS || s.sittingSeconds > SESSION_CAP_SECONDS - activeSeconds) return false;
+  const uint32_t sinceEnd = now - s.sittingEnd;
+  const uint32_t gap = sinceEnd > activeSeconds ? sinceEnd - activeSeconds : 0;
+  return gap < MERGE_GAP_SECONDS;
+}
+
+uint32_t sittingSessionSeconds(const State& previous, const bool merged, const uint32_t activeSeconds) {
+  return merged ? satAdd32(previous.sittingSeconds, activeSeconds) : activeSeconds;
+}
+
+void recordSitting(State& target, const State& previous, const bool merged, const uint32_t activeSeconds,
+                   const uint32_t now, const uint32_t clockId, const bool scored) {
+  // Read everything from previous before writing: they may be the same object.
+  const uint32_t seconds = sittingSessionSeconds(previous, merged, activeSeconds);
+  const uint8_t count = merged ? static_cast<uint8_t>(std::min<uint32_t>(UINT8_MAX, previous.sittingCount + 1u)) : 1;
+  target.sittingEnd = now;
+  target.sittingClock = clockId;
+  target.sittingSeconds = seconds;
+  target.sittingCount = clockId == 0 ? 0 : count;
+  target.sittingScored = scored;
+  if (scored) target.last.sittings = count;
+}
+
+void closeSitting(State& s) {
+  s.sittingClock = 0;
+  s.sittingCount = 0;
+  s.sittingSeconds = 0;
+  s.sittingScored = false;
+}
+
 void pushLogEntry(SessionLog& log, const LogEntry& entry) {
   if (log.count >= LOG_CAPACITY) {
     for (uint8_t i = 1; i < LOG_CAPACITY; i++) log.entries[i - 1] = log.entries[i];
     log.count = LOG_CAPACITY - 1;
   }
   log.entries[log.count++] = entry;
+}
+
+bool sittingNeedsSnapshot(const State& s, const uint32_t activeSeconds, const uint32_t now, const uint32_t clockId) {
+  return s.sittingScored && continuesSitting(s, activeSeconds, now, clockId);
+}
+
+SittingOutcome applySitting(State& s, State& scratch, const bool snapshotLoaded, const uint32_t activeSeconds,
+                            const uint32_t now, const uint32_t clockId, const Doctrine doctrine) {
+  SittingOutcome out;
+  if (activeSeconds < MIN_SITTING_SECONDS) return out;
+  bool merged = continuesSitting(s, activeSeconds, now, clockId);
+  const bool replay = merged && s.sittingScored && snapshotLoaded;
+  if (merged && s.sittingScored && !snapshotLoaded) merged = false;  // can't replay: score on its own
+  const uint32_t seconds = sittingSessionSeconds(s, merged, activeSeconds);
+
+  if (s.version == 0) {
+    // Nothing to save until the first counted session. Start the voyage
+    // before the snapshot is taken so a replay starts from the same seed.
+    if (seconds < MIN_SESSION_SECONDS) return out;
+    startVoyage(s, seconds);
+  }
+
+  if (replay) {
+    // scratch is the snapshot from before the chain. Re-score the whole chain
+    // on it, then record the sitting using the chain totals from s.
+    const bool scored = applySession(scratch, seconds, doctrine);
+    recordSitting(scratch, s, true, activeSeconds, now, clockId, true);
+    s = scratch;
+    out.save = true;
+    out.scored = scored;
+    return out;
+  }
+
+  scratch = s;  // the state before this sitting: the snapshot if it scores
+  out.scored = applySession(s, seconds, doctrine);
+  recordSitting(s, scratch, merged, activeSeconds, now, clockId, out.scored);
+  out.save = true;
+  out.writeSnapshot = out.scored && clockId != 0;
+  return out;
+}
+
+void upsertLogEntry(SessionLog& log, const LogEntry& entry) {
+  if (log.count > 0 && log.entries[log.count - 1].sessionNumber == entry.sessionNumber) {
+    log.entries[log.count - 1] = entry;
+    return;
+  }
+  pushLogEntry(log, entry);
 }
 
 void serializeLogEntry(const LogEntry& e, uint8_t (&buf)[LOG_ENTRY_SIZE]) {
@@ -1011,6 +1093,14 @@ size_t serialize(const State& s, uint8_t* buf, const size_t len) {
   // Version 4: Fuel variance.
   w.u16(static_cast<uint16_t>(r.variancePermille));
 
+  // Version 5: session merging.
+  w.u32(s.sittingEnd);
+  w.u32(s.sittingClock);
+  w.u32(s.sittingSeconds);
+  w.u8(s.sittingCount);
+  w.u8(s.sittingScored ? 1 : 0);
+  w.u8(r.sittings);
+
   if (!w.ok) return 0;
   w.u32(fnv1a(buf, w.pos));
   return w.ok ? w.pos : 0;
@@ -1104,6 +1194,14 @@ bool deserialize(State& out, const uint8_t* buf, const size_t len) {
     r.retired = rd.u8();
   }
   if (version >= 4) r.variancePermille = static_cast<int16_t>(rd.u16());
+  if (version >= 5) {
+    s.sittingEnd = rd.u32();
+    s.sittingClock = rd.u32();
+    s.sittingSeconds = rd.u32();
+    s.sittingCount = rd.u8();
+    s.sittingScored = rd.u8() != 0;
+    r.sittings = std::max<uint8_t>(1, rd.u8());
+  }
 
   const size_t payloadLen = rd.pos;
   const uint32_t checksum = rd.u32();

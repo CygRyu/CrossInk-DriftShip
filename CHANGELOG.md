@@ -12,6 +12,7 @@
 - New Crew and Modules pages in the Drift Ship screen, and crew news on the sleep screen.
 
 - Drift Ship sessions are less predictable: Fuel swings up to 15% either way ("luck of the draw" on the receipt), and hull repairs, expedition wear and jump wear vary a little each time.
+- Drift Ship counts reading sittings less than 5 minutes apart as one session, so a quick sleep or a book switch no longer splits a long read. The receipt shows how many sittings were merged. Merging uses the clock when it is set, and stops once the combined session would pass 90 minutes.
 
 ### Fixed
 
