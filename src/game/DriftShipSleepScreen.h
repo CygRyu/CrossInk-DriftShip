@@ -11,4 +11,9 @@ struct State;
 // bottomReserve keeps that many pixels free at the bottom (for button hints).
 void drawSleepScreen(const GfxRenderer& renderer, const State& state, int bottomReserve = 0);
 
+// Draws text word-wrapped to maxWidth, stopping before a line would cross
+// maxY. Returns the y below the last line drawn. Words longer than a line are
+// drawn on their own line rather than cut.
+int drawWrappedText(const GfxRenderer& renderer, int fontId, int x, int y, int maxWidth, const char* text, int maxY);
+
 }  // namespace DriftShip

@@ -147,10 +147,16 @@ void drawRoute(const GfxRenderer& r, const State& s, const int x, const int y, c
   r.drawLine(hx, y + 8, hx - 8, y, 2, true);
 }
 
-// Draws text word-wrapped to maxWidth, stopping before a line would cross
-// maxY. Returns the y below the last line drawn.
-int drawWrapped(const GfxRenderer& r, const int fontId, const int x, int y, const int maxWidth, const char* text,
-                const int maxY = INT_MAX) {
+// One cell of the stats grid: a small label over a bold value.
+void drawStat(const GfxRenderer& r, const int x, const int y, const char* label, const char* value) {
+  r.drawText(SMALL_FONT_ID, x, y, label);
+  r.drawText(UI_12_FONT_ID, x, y + r.getLineHeight(SMALL_FONT_ID), value, true, EpdFontFamily::BOLD);
+}
+
+}  // namespace
+
+int drawWrappedText(const GfxRenderer& r, const int fontId, const int x, int y, const int maxWidth, const char* text,
+                    const int maxY) {
   const int lineHeight = r.getLineHeight(fontId);
   char line[LINE_LEN] = "";
   const char* p = text;
@@ -177,14 +183,6 @@ int drawWrapped(const GfxRenderer& r, const int fontId, const int x, int y, cons
   return y;
 }
 
-// One cell of the stats grid: a small label over a bold value.
-void drawStat(const GfxRenderer& r, const int x, const int y, const char* label, const char* value) {
-  r.drawText(SMALL_FONT_ID, x, y, label);
-  r.drawText(UI_12_FONT_ID, x, y + r.getLineHeight(SMALL_FONT_ID), value, true, EpdFontFamily::BOLD);
-}
-
-}  // namespace
-
 void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReserve) {
   int top = 0;
   int right = 0;
@@ -205,7 +203,7 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
   if (s.version == 0) {
     drawStarfield(r, s, x0, y + 20, contentWidth, 260);
     drawShip(r, s, width / 2, y + 150);
-    drawWrapped(r, UI_10_FONT_ID, x0, y + 320, contentWidth, tr(STR_DRIFT_SHIP_NOT_STARTED));
+    drawWrappedText(r, UI_10_FONT_ID, x0, y + 320, contentWidth, tr(STR_DRIFT_SHIP_NOT_STARTED), INT_MAX);
     return;
   }
 
@@ -238,7 +236,7 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
   if (rep.watches & WATCH_SURVEY) append(line, sizeof(line), " + ", tr(STR_DRIFT_SHIP_WATCH_SURVEY));
   if (rep.watches & WATCH_EXPEDITION) append(line, sizeof(line), " + ", tr(STR_DRIFT_SHIP_WATCH_EXPEDITION));
   if (rep.watches & WATCH_LONG) append(line, sizeof(line), " + ", tr(STR_DRIFT_SHIP_WATCH_LONG));
-  y = drawWrapped(r, SMALL_FONT_ID, x0, y, contentWidth, line);
+  y = drawWrappedText(r, SMALL_FONT_ID, x0, y, contentWidth, line, INT_MAX);
 
   // The multiplier stack: "82 base  x1.40 reactor  x1.15 crew  x2 lucky"
   char number[16];
@@ -253,7 +251,7 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
     snprintf(lucky, sizeof(lucky), "x2 %s", tr(STR_DRIFT_SHIP_LUCKY));
     append(line, sizeof(line), "  ", lucky);
   }
-  y = drawWrapped(r, SMALL_FONT_ID, x0, y, contentWidth, line);
+  y = drawWrappedText(r, SMALL_FONT_ID, x0, y, contentWidth, line, INT_MAX);
 
   char parts[16];
   char data[16];
@@ -323,7 +321,7 @@ void drawSleepScreen(const GfxRenderer& r, const State& s, const int bottomReser
   const int pinnedTop = height - bottom - bottomReserve - 16 - cellHeight * 3;
   if (events[0]) {
     // Events fill the space above the grid; anything that doesn't fit is cut.
-    y = drawWrapped(r, SMALL_FONT_ID, x0, y, contentWidth, events, pinnedTop - 16);
+    y = drawWrappedText(r, SMALL_FONT_ID, x0, y, contentWidth, events, pinnedTop - 16);
   }
   const int gridTop = std::max(y + 8, pinnedTop);
   const int colWidth = contentWidth / 3;

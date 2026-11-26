@@ -25,6 +25,9 @@ class DriftShipActivity final : public Activity {
   DriftShip::State state;
   DriftShip::SessionLog log;
   Page page = Page::Ship;
+  uint8_t crewStart = 0;  // first crew member on the current crew screen
+  // How many crew the last crew screen fit; set while drawing.
+  mutable uint8_t crewShown = 0;
 
   void turnPage(int delta);
   int drawPageHeader(const char* title) const;

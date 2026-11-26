@@ -11,6 +11,10 @@
 - Bad-luck protection for Legendary crew, derelicts and modules, so unlucky streaks stay short.
 - New Crew and Modules pages in the Drift Ship screen, and crew news on the sleep screen.
 
+### Fixed
+
+- Long text on the Drift Ship screen (crew traits and quirks, module effects, log tags, upgrade costs) now wraps onto the next line instead of being cut off with "...". A large crew continues onto extra crew pages.
+
 ### Changed
 
 - Check for Updates now installs Drift Ship releases from CygRyu/CrossInk-DriftShip instead of upstream CrossInk.
