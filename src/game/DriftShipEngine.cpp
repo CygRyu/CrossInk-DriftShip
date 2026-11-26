@@ -96,9 +96,9 @@ StarType rollStarType(State& s) {
       StarType::DeadGate, StarType::Ruins,    StarType::BinaryStar, StarType::BlackHole, StarType::Void,
   };
   uint8_t at = 0;
-  for (const StarType t : ORDER) {
-    at = static_cast<uint8_t>(at + ERA_STAR_WEIGHTS[era][static_cast<uint8_t>(t)]);
-    if (r < at) return t;
+  for (uint8_t i = 0; i < static_cast<uint8_t>(StarType::Count); i++) {
+    at = static_cast<uint8_t>(at + ERA_STAR_WEIGHTS[era][static_cast<uint8_t>(ORDER[i])]);
+    if (r < at) return ORDER[i];
   }
   return StarType::RedDwarf;
 }
